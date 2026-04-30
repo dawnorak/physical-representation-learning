@@ -86,6 +86,18 @@ class Trainer:
         return max(self.train_cfg.get("target_global_batch_size", 256) // actual_global_batch_size, 1)
 
     def training_loop(self, model_components, loss_fn, optimizer, run_name):
+        use_amp = self.train_cfg.get("amp", False)
+        amp_dtype_name = str(self.train_cfg.get("amp_dtype", "fp16")).lower()
+        if amp_dtype_name == "fp16":
+            amp_dtype = torch.float16
+            use_scaler = use_amp
+        elif amp_dtype_name == "bf16":
+            amp_dtype = torch.bfloat16
+            use_scaler = False
+        else:
+            raise ValueError(f"Invalid amp_dtype: {amp_dtype_name}. Expected 'fp16' or 'bf16'")
+        scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
+
         # set up gradient accumulation
         grad_accum_steps = self.set_up_gradient_accumulation()
         distprint(f"using gradient accumulation with {grad_accum_steps} steps", local_rank=self.rank)
@@ -142,7 +154,8 @@ class Trainer:
             for i, batch in enumerate(self.train_loader):
                 i += self.train_cfg.get("start_step", 0) # add start step to the global step count
 
-                pred, loss_dict = self.step(batch, model_components, loss_fn, self.rank, log=(i == 0 and epoch % 10 == 0))
+                with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+                    pred, loss_dict = self.step(batch, model_components, loss_fn, self.rank, log=(i == 0 and epoch % 10 == 0))
                 if i == 0:
                     distprint(f"train batch {i} pred: {pred[:5]}", local_rank=self.rank)
                     if 'label' in batch:
@@ -151,10 +164,17 @@ class Trainer:
                 del (batch, pred)
 
                 loss = loss_dict['loss'] / grad_accum_steps
-                loss.backward()
+                if use_scaler:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
 
                 if i % grad_accum_steps == 0:
-                    optimizer.step()
+                    if use_scaler:
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
 
                     # Set learning rate from schedule
@@ -259,7 +279,17 @@ class Trainer:
         val_losses_dict = defaultdict(list)
         for i, batch in enumerate(self.val_loader):
             with torch.no_grad():
-                pred, loss_dict = self.step(batch, model_components, loss_fn, self.rank)
+                use_amp = self.train_cfg.get("amp", False)
+                amp_dtype_name = str(self.train_cfg.get("amp_dtype", "fp16")).lower()
+                if amp_dtype_name == "fp16":
+                    amp_dtype = torch.float16
+                elif amp_dtype_name == "bf16":
+                    amp_dtype = torch.bfloat16
+                else:
+                    raise ValueError(f"Invalid amp_dtype: {amp_dtype_name}. Expected 'fp16' or 'bf16'")
+
+                with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+                    pred, loss_dict = self.step(batch, model_components, loss_fn, self.rank)
                 if i == 0:
                     distprint(f"val batch {i} pred: {pred[:5]}", local_rank=self.rank)
                     if 'label' in batch:

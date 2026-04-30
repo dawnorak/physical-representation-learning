@@ -1,6 +1,6 @@
 defaults:
   - dataset: active_matter
-  - model: conv_small
+  - model: conv_large
   - ft: linear
 
 dataset:
@@ -8,8 +8,6 @@ dataset:
 
 model:
   objective: "jepa"
-  dims: [16, 32, 64, 128, 128]
-  num_res_blocks: [3, 3, 3, 9, 3]
 
 train:
   num_epochs: 30
@@ -29,6 +27,8 @@ train:
   noise_std: 1.0
   run_name: "noise-std-1.0"
   distributed: true
+  amp: true
+  amp_dtype: fp16
 
 ft:
   task: "regression"
