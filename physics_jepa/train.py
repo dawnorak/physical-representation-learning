@@ -306,6 +306,17 @@ class Trainer:
             distprint(summarize_convs(encoder), local_rank=self.rank)
 
             model_components = [encoder, predictor]
+            if self.train_cfg.get("multi_scale_temporal_context", False):
+                embed_dim = self.cfg.model.dims[-1]
+                if self.cfg.model.get("vit_equivalency", None) == "tiny":
+                    fusion = torch.nn.Conv3d(embed_dim * 2, embed_dim, kernel_size=1)
+                else:
+                    fusion = torch.nn.Conv2d(embed_dim * 2, embed_dim, kernel_size=1)
+                distprint(
+                    f"num fusion parameters: {sum(p.numel() for p in fusion.parameters())}",
+                    local_rank=self.rank,
+                )
+                model_components.append(fusion)
 
         elif self.cfg.model.objective == 'ae':
             encoder, decoder = get_autoencoder(
