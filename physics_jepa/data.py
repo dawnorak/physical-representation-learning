@@ -110,7 +110,7 @@ class WellDatasetForJEPA(Dataset):
 
         Temporal masking mode:
           Valid start t0 satisfy: t0 + num_frames <= T.
-          ctx is the same clip as tgt, but the last future_mask_frames are zeroed.
+          ctx and tgt come from the same clip; ctx keeps only past frames and tgt keeps only future frames.
         """
         
         idx: List[tuple[int, int, int]] = []
@@ -254,6 +254,7 @@ class WellDatasetForJEPA(Dataset):
 
         if self.temporal_masking:
             ctx[-self.future_mask_frames:] = 0
+            tgt[:-self.future_mask_frames] = 0
 
         # -> torch (C, T, H, W)
         ctx_t = torch.from_numpy(ctx).permute(3, 0, 1, 2).contiguous()

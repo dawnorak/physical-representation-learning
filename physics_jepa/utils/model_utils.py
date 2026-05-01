@@ -153,8 +153,12 @@ class ConvEncoder(nn.Module):
     def forward(self, x, **kwargs):
         for i in range(len(self.dims)):
             x = self.downsample_layers[i](x)
-            x = x.squeeze(2)
-            x = self.res_blocks[i](x)
+            for block in self.res_blocks[i]:
+                if isinstance(block.conv, nn.Conv2d) and x.dim() == 5:
+                    x = x.squeeze(2) if x.shape[2] == 1 else x.mean(dim=2)
+                elif isinstance(block.conv, nn.Conv3d) and x.dim() == 4:
+                    x = x.unsqueeze(2)
+                x = block(x)
         return x
 
 class ConvEncoderViTTiny(nn.Module):
