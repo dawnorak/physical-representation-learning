@@ -14,6 +14,7 @@ from omegaconf import OmegaConf
 from collections import defaultdict
 import datetime
 import gc
+from contextlib import nullcontext
 
 from .data import get_train_dataloader_from_cfg, get_val_dataloader_from_cfg, get_dataset_metadata
 from .model import get_model_and_loss_cnn, get_autoencoder
@@ -29,6 +30,12 @@ class Trainer:
     def __init__(self, cfg, stage="train"):
         self.cfg = cfg
         self.train_cfg = cfg[stage]
+        self.precision = str(self.train_cfg.get("precision", "fp32")).lower()
+        if self.precision not in {"fp32", "bf16", "fp16"}:
+            raise ValueError(f"Invalid precision: {self.precision}. Choose from fp32, bf16, fp16.")
+        self.use_amp = self.precision in {"bf16", "fp16"}
+        self.amp_dtype = torch.bfloat16 if self.precision == "bf16" else torch.float16
+        self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.precision == "fp16")
 
         if self.cfg.model.get("vit_equivalency", None) == 'tiny':
             assert self.cfg.model.dims[-1] == 384, "dims must be [48, 96, 192, 384] for tiny vit equivalency"
@@ -45,6 +52,7 @@ class Trainer:
             torch.cuda.set_device(0)
 
         distprint(OmegaConf.to_yaml(self.cfg, resolve=True), local_rank=self.rank)
+        distprint(f"training precision: {self.precision}", local_rank=self.rank)
 
         self.train_loader = get_train_dataloader_from_cfg(self.cfg, stage=stage, rank=self.rank, world_size=self.world_size)
         self.val_loader = get_val_dataloader_from_cfg(self.cfg, stage=stage, rank=self.rank, world_size=self.world_size)
@@ -151,10 +159,17 @@ class Trainer:
                 del (batch, pred)
 
                 loss = loss_dict['loss'] / grad_accum_steps
-                loss.backward()
+                if self.grad_scaler.is_enabled():
+                    self.grad_scaler.scale(loss).backward()
+                else:
+                    loss.backward()
 
                 if i % grad_accum_steps == 0:
-                    optimizer.step()
+                    if self.grad_scaler.is_enabled():
+                        self.grad_scaler.step(optimizer)
+                        self.grad_scaler.update()
+                    else:
+                        optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
 
                     # Set learning rate from schedule
@@ -236,7 +251,13 @@ class Trainer:
             batch['target'] = tgt
             del tgt
 
-        pred, loss_dict = self.pred_fn(batch, model_components, loss_fn)
+        autocast_context = (
+            torch.autocast(device_type="cuda", dtype=self.amp_dtype)
+            if self.use_amp
+            else nullcontext()
+        )
+        with autocast_context:
+            pred, loss_dict = self.pred_fn(batch, model_components, loss_fn)
 
         if log:
             distprint(f"pred shape: {pred.shape}", local_rank=self.rank)

@@ -29,6 +29,7 @@ train:
   future_mask_frames: 4
   multi_scale_temporal_context: false
   multi_scale_temporal_stride: 4
+  precision: fp32
   run_name: "noise-std-1.0"
   distributed: true
 
