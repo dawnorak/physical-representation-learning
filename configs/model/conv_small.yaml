@@ -1,3 +1,9 @@
 dims: [16, 32, 64, 128]
 num_res_blocks: [3, 3, 9, 3]
 name: cnn
+physics_aware: false
+field_aware_stem: null
+periodic_padding: null
+temporal_downsample_start_stage: null
+use_global_context_token: null
+field_group_sizes: null

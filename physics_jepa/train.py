@@ -69,6 +69,8 @@ class Trainer:
         )
 
         run_name = f"{self.cfg.dataset.name}-{self.cfg.dataset.num_frames}frames-{self.cfg.model.name}-{self.cfg.model.objective}"
+        if self.cfg.model.get("physics_aware", False):
+            run_name = f"{run_name}-physics-aware"
         if self.train_cfg.get("run_name", None) is not None:
             run_name = f"{run_name}-{self.train_cfg.run_name}"
         if self.rank == 0 and not self.cfg.dry_run:
@@ -310,14 +312,21 @@ class Trainer:
 
     def get_model_components(self):
         if self.cfg.model.objective == 'jepa':
+            in_chans = len(self.train_cfg.fields) if self.train_cfg.get("fields", None) is not None else self.cfg.dataset.num_chans
             encoder, predictor, loss_fn = get_model_and_loss_cnn(
                 self.cfg.model.dims,
                 self.cfg.model.num_res_blocks,
                 self.cfg.dataset.num_frames,
-                in_chans=self.cfg.dataset.num_chans if 'fields' not in self.train_cfg else len(self.train_cfg.fields),
+                in_chans=in_chans,
                 sim_coeff=self.train_cfg.sim_coeff,
                 std_coeff=self.train_cfg.std_coeff,
                 cov_coeff=self.train_cfg.cov_coeff,
+                physics_aware=self.cfg.model.get("physics_aware", False),
+                field_aware_stem=self.cfg.model.get("field_aware_stem", None),
+                periodic_padding=self.cfg.model.get("periodic_padding", None),
+                temporal_downsample_start_stage=self.cfg.model.get("temporal_downsample_start_stage", None),
+                use_global_context_token=self.cfg.model.get("use_global_context_token", None),
+                field_group_sizes=self.cfg.model.get("field_group_sizes", None),
             )
 
             if 'encoder_path' in self.train_cfg and self.train_cfg.encoder_path is not None:
@@ -361,7 +370,7 @@ class Trainer:
                 self.cfg.model.dims,
                 self.cfg.model.num_res_blocks,
                 self.cfg.dataset.num_frames,
-                in_chans=self.cfg.dataset.num_chans if 'fields' not in self.train_cfg else len(self.train_cfg.fields),
+                in_chans=len(self.train_cfg.fields) if self.train_cfg.get("fields", None) is not None else self.cfg.dataset.num_chans,
             )
             metadata = get_dataset_metadata(self.cfg.dataset.name)
             head = AttentiveClassifier(
