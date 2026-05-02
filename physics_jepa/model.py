@@ -10,6 +10,7 @@ from physics_jepa.utils.model_utils import (
     ConvEncoder,
     ConvEncoderViTTiny,
     ConvPredictor,
+    ConvPredictorViTTiny,
     ConvDecoder,
     MultiscaleConvEncoder,
 )
@@ -105,25 +106,36 @@ def get_model_and_loss_cnn(
     temporal_downsample_start_stage=None,
     use_global_context_token=None,
     field_group_sizes=None,
+    vit_equivalency=None,
 ):
-    encoder = _build_cnn_encoder(
-        dims=dims,
-        num_res_blocks=num_res_blocks,
-        num_frames=num_frames,
-        in_chans=in_chans,
-        physics_aware=physics_aware,
-        field_aware_stem=field_aware_stem,
-        periodic_padding=periodic_padding,
-        temporal_downsample_start_stage=temporal_downsample_start_stage,
-        use_global_context_token=use_global_context_token,
-        field_group_sizes=field_group_sizes,
-    )
+    if vit_equivalency == "tiny":
+        encoder = ConvEncoderViTTiny(
+            in_chans=in_chans,
+            num_res_blocks=num_res_blocks,
+            dims=dims,
+        )
+    else:
+        encoder = _build_cnn_encoder(
+            dims=dims,
+            num_res_blocks=num_res_blocks,
+            num_frames=num_frames,
+            in_chans=in_chans,
+            physics_aware=physics_aware,
+            field_aware_stem=field_aware_stem,
+            periodic_padding=periodic_padding,
+            temporal_downsample_start_stage=temporal_downsample_start_stage,
+            use_global_context_token=use_global_context_token,
+            field_group_sizes=field_group_sizes,
+        )
     loss = partial(vicreg_loss_3d,
                 sim_coeff=sim_coeff,
                 std_coeff=std_coeff,
                 cov_coeff=cov_coeff,
                 n_chunks=5)
-    predictor = ConvPredictor(dims=list(reversed(encoder.dims))[:2])
+    if vit_equivalency == "tiny":
+        predictor = ConvPredictorViTTiny(dims=list(reversed(encoder.dims))[:2])
+    else:
+        predictor = ConvPredictor(dims=list(reversed(encoder.dims))[:2])
     
     return encoder, predictor, loss
 

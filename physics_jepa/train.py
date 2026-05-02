@@ -327,6 +327,7 @@ class Trainer:
                 temporal_downsample_start_stage=self.cfg.model.get("temporal_downsample_start_stage", None),
                 use_global_context_token=self.cfg.model.get("use_global_context_token", None),
                 field_group_sizes=self.cfg.model.get("field_group_sizes", None),
+                vit_equivalency=self.cfg.model.get("vit_equivalency", None),
             )
 
             if 'encoder_path' in self.train_cfg and self.train_cfg.encoder_path is not None:
@@ -345,6 +346,17 @@ class Trainer:
             distprint(summarize_convs(encoder), local_rank=self.rank)
 
             model_components = [encoder, predictor]
+            if self.train_cfg.get("multi_scale_temporal_context", False):
+                embed_dim = self.cfg.model.dims[-1]
+                if self.cfg.model.get("vit_equivalency", None) == "tiny":
+                    fusion = torch.nn.Conv3d(embed_dim * 2, embed_dim, kernel_size=1)
+                else:
+                    fusion = torch.nn.Conv2d(embed_dim * 2, embed_dim, kernel_size=1)
+                distprint(
+                    f"num fusion parameters: {sum(p.numel() for p in fusion.parameters())}",
+                    local_rank=self.rank,
+                )
+                model_components.append(fusion)
 
         elif self.cfg.model.objective == 'ae':
             encoder, decoder = get_autoencoder(
@@ -371,6 +383,7 @@ class Trainer:
                 self.cfg.model.num_res_blocks,
                 self.cfg.dataset.num_frames,
                 in_chans=len(self.train_cfg.fields) if self.train_cfg.get("fields", None) is not None else self.cfg.dataset.num_chans,
+                vit_equivalency=self.cfg.model.get("vit_equivalency", None),
             )
             metadata = get_dataset_metadata(self.cfg.dataset.name)
             head = AttentiveClassifier(
@@ -393,11 +406,11 @@ class Trainer:
             loss_fn = partial(vicreg_loss_bcs, sim_coeff=self.train_cfg.sim_coeff, bcs_coeff=self.train_cfg.bcs_coeff, num_slices=self.train_cfg.num_slices)
 
         if self.world_size > 1:
-            for component in model_components:
-                component = DDP(component.to(self.rank), device_ids=[self.rank])
+            for idx, component in enumerate(model_components):
+                model_components[idx] = DDP(component.to(self.rank), device_ids=[self.rank])
         else:
-            for component in model_components:
-                component = component.to(self.rank)
+            for idx, component in enumerate(model_components):
+                model_components[idx] = component.to(self.rank)
 
         return model_components, loss_fn
 

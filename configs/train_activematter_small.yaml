@@ -27,6 +27,10 @@ train:
   lr: 1e-3 # following 1e-3 * global_batch_size/256 rule
   weight_decay: 0.05
   noise_std: 1.0
+  temporal_masking: false
+  future_mask_frames: 4
+  multi_scale_temporal_context: false
+  multi_scale_temporal_stride: 4
   run_name: "noise-std-1.0"
   distributed: true
   amp: true
