@@ -5,5 +5,5 @@ physics_aware: false
 field_aware_stem: null
 periodic_padding: null
 temporal_downsample_start_stage: null
-use_global_context_token: null
+use_global_context_token: false
 field_group_sizes: null
