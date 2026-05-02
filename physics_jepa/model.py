@@ -6,21 +6,136 @@ from functools import partial
 from einops import rearrange
 from collections import defaultdict
 
-from physics_jepa.utils.model_utils import ConvEncoder, ConvPredictor, ConvDecoder
+from physics_jepa.utils.model_utils import (
+    ConvEncoder,
+    ConvEncoderViTTiny,
+    ConvPredictor,
+    ConvPredictorViTTiny,
+    ConvDecoder,
+    MultiscaleConvEncoder,
+)
 
-def get_model_and_loss_cnn(dims, num_res_blocks, num_frames, in_chans=2, sim_coeff=25, std_coeff=25, cov_coeff=1):
-    encoder = ConvEncoder(
-        dims=dims,
+
+def _infer_in_chans(cfg, in_chans=None, stage_cfg=None):
+    if in_chans is not None:
+        return int(in_chans)
+
+    if stage_cfg is not None and stage_cfg.get("fields", None) is not None:
+        return len(stage_cfg.fields)
+
+    if cfg.dataset.get("num_chans", None) is not None:
+        return int(cfg.dataset.num_chans)
+
+    raise ValueError("Unable to infer input channel count from config")
+
+
+def _build_cnn_encoder(
+    dims,
+    num_res_blocks,
+    num_frames,
+    in_chans=2,
+    physics_aware=False,
+    field_aware_stem=None,
+    periodic_padding=None,
+    temporal_downsample_start_stage=None,
+    use_global_context_token=None,
+    field_group_sizes=None,
+):
+    if physics_aware:
+        field_aware_stem = True if field_aware_stem is None else bool(field_aware_stem)
+        periodic_padding = True if periodic_padding is None else bool(periodic_padding)
+        if temporal_downsample_start_stage is None:
+            temporal_downsample_start_stage = min(3, len(dims) - 1)
+        if use_global_context_token is None:
+            use_global_context_token = False
+        return MultiscaleConvEncoder(
+            in_chans=in_chans,
+            num_res_blocks=num_res_blocks,
+            dims=dims,
+            num_frames=num_frames,
+            field_aware_stem=field_aware_stem,
+            periodic_padding=periodic_padding,
+            field_group_sizes=field_group_sizes,
+            temporal_downsample_start_stage=temporal_downsample_start_stage,
+            use_global_context_token=use_global_context_token,
+        )
+
+    return ConvEncoder(
         in_chans=in_chans,
         num_res_blocks=num_res_blocks,
+        dims=dims,
         num_frames=num_frames,
     )
+
+
+def build_encoder_from_cfg(cfg, in_chans=None, stage_cfg=None):
+    resolved_in_chans = _infer_in_chans(cfg, in_chans=in_chans, stage_cfg=stage_cfg)
+
+    if cfg.model.get("vit_equivalency", None) == "tiny":
+        return ConvEncoderViTTiny(
+            in_chans=resolved_in_chans,
+            num_res_blocks=cfg.model.num_res_blocks,
+            dims=cfg.model.dims,
+        )
+
+    return _build_cnn_encoder(
+        dims=cfg.model.dims,
+        num_res_blocks=cfg.model.num_res_blocks,
+        num_frames=cfg.dataset.num_frames,
+        in_chans=resolved_in_chans,
+        physics_aware=cfg.model.get("physics_aware", False),
+        field_aware_stem=cfg.model.get("field_aware_stem", None),
+        periodic_padding=cfg.model.get("periodic_padding", None),
+        temporal_downsample_start_stage=cfg.model.get("temporal_downsample_start_stage", None),
+        use_global_context_token=cfg.model.get("use_global_context_token", None),
+        field_group_sizes=cfg.model.get("field_group_sizes", None),
+    )
+
+
+def get_model_and_loss_cnn(
+    dims,
+    num_res_blocks,
+    num_frames,
+    in_chans=2,
+    sim_coeff=25,
+    std_coeff=25,
+    cov_coeff=1,
+    physics_aware=False,
+    field_aware_stem=None,
+    periodic_padding=None,
+    temporal_downsample_start_stage=None,
+    use_global_context_token=None,
+    field_group_sizes=None,
+    vit_equivalency=None,
+):
+    if vit_equivalency == "tiny":
+        encoder = ConvEncoderViTTiny(
+            in_chans=in_chans,
+            num_res_blocks=num_res_blocks,
+            dims=dims,
+        )
+    else:
+        encoder = _build_cnn_encoder(
+            dims=dims,
+            num_res_blocks=num_res_blocks,
+            num_frames=num_frames,
+            in_chans=in_chans,
+            physics_aware=physics_aware,
+            field_aware_stem=field_aware_stem,
+            periodic_padding=periodic_padding,
+            temporal_downsample_start_stage=temporal_downsample_start_stage,
+            use_global_context_token=use_global_context_token,
+            field_group_sizes=field_group_sizes,
+        )
     loss = partial(vicreg_loss_3d,
                 sim_coeff=sim_coeff,
                 std_coeff=std_coeff,
                 cov_coeff=cov_coeff,
                 n_chunks=5)
-    predictor = ConvPredictor(dims=list(reversed(encoder.dims))[:2])
+    if vit_equivalency == "tiny":
+        predictor = ConvPredictorViTTiny(dims=list(reversed(encoder.dims))[:2])
+    else:
+        predictor = ConvPredictor(dims=list(reversed(encoder.dims))[:2])
     
     return encoder, predictor, loss
 

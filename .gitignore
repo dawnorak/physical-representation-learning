@@ -1,14 +1,19 @@
-wandb/
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.claude
+.vscode/
+.idea/
+
+# Python caches
 __pycache__/
 */__pycache__/
-slurm-*.out
-*/slurm-*.out
-*.gif
-*/OLD/
-OLD/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .ipynb_checkpoints/
-figures/
-*.log
+
+# Notebook / scratch artifacts
 */*.ipynb
 *.ipynb
-.claude
+*.gif

@@ -94,11 +94,14 @@ class WellDatasetForJEPA(Dataset):
         self.index, self.physical_params_idx = self._build_index()
         print(f"Found {len(self.index)} examples", flush=True)
         print(f"Physical params: {self.physical_params_idx}", flush=True)
-        self._build_global_field_schema(Path(self.data_dir) / self.index[0][0])
 
         if len(self.index) == 0:
-            raise ValueError("No valid windows found. "
-                             "Check num_frames and that trajectories have at least 2*num_frames frames.")
+            raise ValueError(
+                f"No valid windows found under {self.data_dir}. "
+                "Check num_frames, stride, temporal_masking, and that the shard files contain enough frames."
+            )
+
+        self._build_global_field_schema(Path(self.data_dir) / self.index[0][0])
 
     # ---- Discovery & indexing ----
 
@@ -110,7 +113,7 @@ class WellDatasetForJEPA(Dataset):
 
         Temporal masking mode:
           Valid start t0 satisfy: t0 + num_frames <= T.
-          ctx and tgt come from the same clip; ctx keeps only past frames and tgt keeps only future frames.
+          ctx and tgt come from the same clip; ctx masks the future frames.
         """
         
         idx: List[tuple[int, int, int]] = []
@@ -254,7 +257,6 @@ class WellDatasetForJEPA(Dataset):
 
         if self.temporal_masking:
             ctx[-self.future_mask_frames:] = 0
-            tgt[:-self.future_mask_frames] = 0
 
         # -> torch (C, T, H, W)
         ctx_t = torch.from_numpy(ctx).permute(3, 0, 1, 2).contiguous()

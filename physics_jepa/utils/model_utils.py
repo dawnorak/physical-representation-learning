@@ -3,8 +3,362 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import numpy as np
+from typing import Iterable, Sequence
 
-from timm.models.layers import DropPath
+try:
+    from timm.models.layers import DropPath
+except Exception:
+    class DropPath(nn.Module):
+        """Fallback DropPath so the repo still imports without timm."""
+
+        def __init__(self, drop_prob: float = 0.0):
+            super().__init__()
+            self.drop_prob = float(drop_prob)
+
+        def forward(self, x):
+            if self.drop_prob == 0.0 or not self.training:
+                return x
+            keep_prob = 1.0 - self.drop_prob
+            shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+            random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+            random_tensor.floor_()
+            return x.div(keep_prob) * random_tensor
+
+
+def _to_3tuple(value):
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        values = tuple(int(v) for v in value)
+        if len(values) != 3:
+            raise ValueError(f"Expected a 3-tuple, got {values}")
+        return values
+    v = int(value)
+    return (v, v, v)
+
+
+def _normalize_field_group_sizes(in_chans: int, field_group_sizes: Sequence[int] | None):
+    if field_group_sizes is not None:
+        sizes = tuple(int(v) for v in field_group_sizes)
+        if sum(sizes) != in_chans:
+            raise ValueError(
+                f"field_group_sizes={sizes} must sum to in_chans={in_chans}"
+            )
+        return sizes
+
+    if in_chans == 11:
+        return (1, 2, 4, 4)
+    if in_chans == 4:
+        return (1, 1, 1, 1)
+    if in_chans == 2:
+        return (1, 1)
+    return (in_chans,)
+
+
+def _allocate_group_widths(total_width: int, group_sizes: Sequence[int]):
+    group_sizes = np.asarray(group_sizes, dtype=np.float64)
+    if np.any(group_sizes <= 0):
+        raise ValueError(f"group_sizes must all be positive, got {group_sizes.tolist()}")
+
+    raw = total_width * group_sizes / group_sizes.sum()
+    widths = np.floor(raw).astype(int)
+    widths = np.maximum(widths, 1)
+
+    remainder = int(total_width - widths.sum())
+    frac = raw - np.floor(raw)
+
+    if remainder > 0:
+        order = np.argsort(-frac)
+        for i in range(remainder):
+            widths[order[i % len(widths)]] += 1
+    elif remainder < 0:
+        order = np.argsort(frac)
+        cursor = 0
+        while remainder < 0:
+            idx = order[cursor % len(widths)]
+            if widths[idx] > 1:
+                widths[idx] -= 1
+                remainder += 1
+            cursor += 1
+
+    if int(widths.sum()) != total_width:
+        raise RuntimeError("Failed to allocate stem widths that sum to the target width")
+    return tuple(int(v) for v in widths)
+
+
+class PaddedConv3d(nn.Module):
+    """Conv3d with explicit zero padding in time and optional circular padding in space."""
+
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride=1,
+        groups=1,
+        bias=True,
+        periodic_spatial=False,
+    ):
+        super().__init__()
+        self.kernel_size = _to_3tuple(kernel_size)
+        self.stride = _to_3tuple(stride)
+        self.periodic_spatial = bool(periodic_spatial)
+        self.conv = nn.Conv3d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=self.kernel_size,
+            stride=self.stride,
+            padding=0,
+            groups=groups,
+            bias=bias,
+        )
+
+    def forward(self, x):
+        kt, kh, kw = self.kernel_size
+        pad_t = kt // 2 if kt > 1 else 0
+        pad_h = kh // 2 if kh > 1 else 0
+        pad_w = kw // 2 if kw > 1 else 0
+
+        # Only same-pad stride-1 blocks. Downsample layers should stay "valid" so the
+        # spatial/temporal sizes shrink exactly as intended.
+        if all(s == 1 for s in self.stride):
+            if pad_t > 0:
+                x = F.pad(x, (0, 0, 0, 0, pad_t, pad_t), mode="constant", value=0.0)
+            if pad_h > 0 or pad_w > 0:
+                if self.periodic_spatial:
+                    x = F.pad(x, (pad_w, pad_w, pad_h, pad_h, 0, 0), mode="circular")
+                else:
+                    x = F.pad(x, (pad_w, pad_w, pad_h, pad_h, 0, 0), mode="constant", value=0.0)
+        return self.conv(x)
+
+
+class StandardStem(nn.Module):
+    def __init__(self, in_chans, out_chans, periodic_spatial=False, kernel_size=3):
+        super().__init__()
+        self.conv = PaddedConv3d(
+            in_channels=in_chans,
+            out_channels=out_chans,
+            kernel_size=(1, kernel_size, kernel_size),
+            stride=1,
+            bias=False,
+            periodic_spatial=periodic_spatial,
+        )
+        self.norm = LayerNorm(out_chans, data_format="channels_first")
+
+    def forward(self, x):
+        return self.norm(self.conv(x))
+
+
+class FieldAwareStem(nn.Module):
+    """Separate stems for scalar/vector/tensor channel groups, then fuse them."""
+
+    def __init__(
+        self,
+        in_chans,
+        out_chans,
+        field_group_sizes: Sequence[int] | None = None,
+        periodic_spatial=False,
+        kernel_size=3,
+    ):
+        super().__init__()
+        self.field_group_sizes = _normalize_field_group_sizes(in_chans, field_group_sizes)
+        branch_widths = _allocate_group_widths(out_chans, self.field_group_sizes)
+
+        self.group_stems = nn.ModuleList()
+        for in_width, out_width in zip(self.field_group_sizes, branch_widths):
+            self.group_stems.append(
+                nn.Sequential(
+                    PaddedConv3d(
+                        in_channels=in_width,
+                        out_channels=out_width,
+                        kernel_size=(1, kernel_size, kernel_size),
+                        stride=1,
+                        bias=False,
+                        periodic_spatial=periodic_spatial,
+                    ),
+                    LayerNorm(out_width, data_format="channels_first"),
+                    nn.GELU(),
+                )
+            )
+
+        self.fuse = nn.Sequential(
+            nn.Conv3d(out_chans, out_chans, kernel_size=1, bias=False),
+            LayerNorm(out_chans, data_format="channels_first"),
+            nn.GELU(),
+        )
+
+    def forward(self, x):
+        chunks = torch.split(x, self.field_group_sizes, dim=1)
+        branch_outputs = [stem(chunk) for stem, chunk in zip(self.group_stems, chunks)]
+        x = torch.cat(branch_outputs, dim=1)
+        return self.fuse(x)
+
+
+class PeriodicResidualBlock(nn.Module):
+    def __init__(
+        self,
+        embed_dim,
+        temporal_kernel_size=1,
+        spatial_kernel_size=7,
+        layer_scale_init_value=1e-6,
+        drop_path=0.0,
+        periodic_spatial=False,
+    ):
+        super().__init__()
+        self.depthwise = PaddedConv3d(
+            in_channels=embed_dim,
+            out_channels=embed_dim,
+            kernel_size=(temporal_kernel_size, spatial_kernel_size, spatial_kernel_size),
+            stride=1,
+            groups=embed_dim,
+            bias=True,
+            periodic_spatial=periodic_spatial,
+        )
+        self.norm = LayerNorm(embed_dim, data_format="channels_last")
+        self.pwconv1 = nn.Linear(embed_dim, 4 * embed_dim)
+        self.act = nn.GELU()
+        self.pwconv2 = nn.Linear(4 * embed_dim, embed_dim)
+        self.gamma = (
+            nn.Parameter(layer_scale_init_value * torch.ones((embed_dim)), requires_grad=True)
+            if layer_scale_init_value > 0
+            else None
+        )
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+
+    def forward(self, x):
+        residual = x
+        x = self.depthwise(x)
+        x = x.permute(0, 2, 3, 4, 1)
+        x = self.norm(x)
+        x = self.pwconv1(x)
+        x = self.act(x)
+        x = self.pwconv2(x)
+        if self.gamma is not None:
+            x = self.gamma * x
+        x = x.permute(0, 4, 1, 2, 3)
+        return residual + self.drop_path(x)
+
+
+class MultiscaleConvEncoder(nn.Module):
+    """A configurable CNN encoder for physics videos."""
+
+    def __init__(
+        self,
+        in_chans=2,
+        num_res_blocks=[3, 3, 9, 3],
+        dims=[96, 192, 384, 768],
+        num_frames=4,
+        field_aware_stem=False,
+        periodic_padding=False,
+        field_group_sizes: Sequence[int] | None = None,
+        temporal_downsample_start_stage=1,
+        use_global_context_token=False,
+    ):
+        super().__init__()
+        if len(num_res_blocks) != len(dims):
+            raise ValueError(
+                f"num_res_blocks must have the same length as dims, got {len(num_res_blocks)} and {len(dims)}"
+            )
+
+        self.dims = dims
+        self.num_frames = int(num_frames)
+        self.field_aware_stem = bool(field_aware_stem)
+        self.periodic_padding = bool(periodic_padding)
+        self.temporal_downsample_start_stage = (
+            int(temporal_downsample_start_stage)
+            if temporal_downsample_start_stage is not None
+            else 1
+        )
+        self.use_global_context_token = bool(use_global_context_token)
+
+        if self.field_aware_stem:
+            stem = FieldAwareStem(
+                in_chans=in_chans,
+                out_chans=dims[0],
+                field_group_sizes=field_group_sizes,
+                periodic_spatial=self.periodic_padding,
+            )
+        else:
+            stem = StandardStem(
+                in_chans=in_chans,
+                out_chans=dims[0],
+                periodic_spatial=self.periodic_padding,
+            )
+
+        self.downsample_layers = nn.ModuleList([stem])
+        self.res_blocks = nn.ModuleList()
+
+        stem_temporal_kernel = 1 if self.temporal_downsample_start_stage > 0 else 3
+        self.res_blocks.append(
+            nn.Sequential(
+                *[
+                    PeriodicResidualBlock(
+                        dims[0],
+                        temporal_kernel_size=stem_temporal_kernel,
+                        periodic_spatial=self.periodic_padding,
+                    )
+                    for _ in range(num_res_blocks[0])
+                ]
+            )
+        )
+
+        current_time = self.num_frames
+        for stage_idx in range(1, len(dims)):
+            downsample_time = stage_idx >= self.temporal_downsample_start_stage and current_time > 1
+            temporal_stride = 2 if downsample_time else 1
+            if downsample_time:
+                current_time = max(1, current_time // 2)
+
+            self.downsample_layers.append(
+                nn.Sequential(
+                    LayerNorm(dims[stage_idx - 1], data_format="channels_first"),
+                    PaddedConv3d(
+                        in_channels=dims[stage_idx - 1],
+                        out_channels=dims[stage_idx],
+                        kernel_size=(temporal_stride, 2, 2),
+                        stride=(temporal_stride, 2, 2),
+                        bias=False,
+                        periodic_spatial=self.periodic_padding,
+                    ),
+                )
+            )
+
+            temporal_kernel_size = 3 if stage_idx >= self.temporal_downsample_start_stage else 1
+            self.res_blocks.append(
+                nn.Sequential(
+                    *[
+                        PeriodicResidualBlock(
+                            dims[stage_idx],
+                            temporal_kernel_size=temporal_kernel_size,
+                            periodic_spatial=self.periodic_padding,
+                        )
+                        for _ in range(num_res_blocks[stage_idx])
+                    ]
+                )
+            )
+
+        if self.use_global_context_token:
+            self.global_context_proj = nn.Sequential(
+                nn.LayerNorm(dims[-1]),
+                nn.Linear(dims[-1], dims[-1]),
+                nn.GELU(),
+                nn.Linear(dims[-1], dims[-1]),
+            )
+
+    def forward(self, x, **kwargs):
+        for i in range(len(self.dims)):
+            x = self.downsample_layers[i](x)
+            x = self.res_blocks[i](x)
+
+        if self.use_global_context_token:
+            global_token = x.mean(dim=(2, 3, 4))
+            global_token = self.global_context_proj(global_token)
+            x = x + global_token[:, :, None, None, None]
+
+        if x.dim() == 5:
+            if x.shape[2] > 1:
+                x = x.mean(dim=2)
+            else:
+                x = x.squeeze(2)
+        return x.contiguous()
 
 class PatchEmbed3D(nn.Module):
     """

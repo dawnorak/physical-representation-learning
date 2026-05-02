@@ -26,6 +26,10 @@ train:
   min_lr: 1e-6
   lr: 1e-4 # following 1e-3 * global_batch_size/256 rule
   weight_decay: 0.05
+  temporal_masking: false
+  future_mask_frames: 4
+  multi_scale_temporal_context: false
+  multi_scale_temporal_stride: 4
   run_name: "lr1e-4-warmup6epochs-5chunksloss"
   distributed: true
 

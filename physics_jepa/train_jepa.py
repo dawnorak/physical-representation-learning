@@ -12,11 +12,8 @@ class JepaTrainer(Trainer):
         super().__init__(cfg)
 
     def pred_fn(self, batch, model_components, loss_fn):
-        if len(model_components) == 3:
-            encoder, predictor, fusion = model_components
-        else:
-            encoder, predictor = model_components
-            fusion = None
+        encoder, predictor = model_components[:2]
+        fusion = model_components[2] if len(model_components) > 2 else None
 
         ctx_embed = encoder(batch['context'])
         if fusion is not None:

@@ -77,6 +77,8 @@ class Trainer:
         )
 
         run_name = f"{self.cfg.dataset.name}-{self.cfg.dataset.num_frames}frames-{self.cfg.model.name}-{self.cfg.model.objective}"
+        if self.cfg.model.get("physics_aware", False):
+            run_name = f"{run_name}-physics-aware"
         if self.train_cfg.get("run_name", None) is not None:
             run_name = f"{run_name}-{self.train_cfg.run_name}"
         if self.rank == 0 and not self.cfg.dry_run:
@@ -94,6 +96,18 @@ class Trainer:
         return max(self.train_cfg.get("target_global_batch_size", 256) // actual_global_batch_size, 1)
 
     def training_loop(self, model_components, loss_fn, optimizer, run_name):
+        use_amp = self.train_cfg.get("amp", False)
+        amp_dtype_name = str(self.train_cfg.get("amp_dtype", "fp16")).lower()
+        if amp_dtype_name == "fp16":
+            amp_dtype = torch.float16
+            use_scaler = use_amp
+        elif amp_dtype_name == "bf16":
+            amp_dtype = torch.bfloat16
+            use_scaler = False
+        else:
+            raise ValueError(f"Invalid amp_dtype: {amp_dtype_name}. Expected 'fp16' or 'bf16'")
+        scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
+
         # set up gradient accumulation
         grad_accum_steps = self.set_up_gradient_accumulation()
         distprint(f"using gradient accumulation with {grad_accum_steps} steps", local_rank=self.rank)
@@ -150,7 +164,8 @@ class Trainer:
             for i, batch in enumerate(self.train_loader):
                 i += self.train_cfg.get("start_step", 0) # add start step to the global step count
 
-                pred, loss_dict = self.step(batch, model_components, loss_fn, self.rank, log=(i == 0 and epoch % 10 == 0))
+                with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+                    pred, loss_dict = self.step(batch, model_components, loss_fn, self.rank, log=(i == 0 and epoch % 10 == 0))
                 if i == 0:
                     distprint(f"train batch {i} pred: {pred[:5]}", local_rank=self.rank)
                     if 'label' in batch:
@@ -159,15 +174,15 @@ class Trainer:
                 del (batch, pred)
 
                 loss = loss_dict['loss'] / grad_accum_steps
-                if self.grad_scaler.is_enabled():
-                    self.grad_scaler.scale(loss).backward()
+                if use_scaler:
+                    scaler.scale(loss).backward()
                 else:
                     loss.backward()
 
                 if i % grad_accum_steps == 0:
-                    if self.grad_scaler.is_enabled():
-                        self.grad_scaler.step(optimizer)
-                        self.grad_scaler.update()
+                    if use_scaler:
+                        scaler.step(optimizer)
+                        scaler.update()
                     else:
                         optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
@@ -280,7 +295,17 @@ class Trainer:
         val_losses_dict = defaultdict(list)
         for i, batch in enumerate(self.val_loader):
             with torch.no_grad():
-                pred, loss_dict = self.step(batch, model_components, loss_fn, self.rank)
+                use_amp = self.train_cfg.get("amp", False)
+                amp_dtype_name = str(self.train_cfg.get("amp_dtype", "fp16")).lower()
+                if amp_dtype_name == "fp16":
+                    amp_dtype = torch.float16
+                elif amp_dtype_name == "bf16":
+                    amp_dtype = torch.bfloat16
+                else:
+                    raise ValueError(f"Invalid amp_dtype: {amp_dtype_name}. Expected 'fp16' or 'bf16'")
+
+                with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+                    pred, loss_dict = self.step(batch, model_components, loss_fn, self.rank)
                 if i == 0:
                     distprint(f"val batch {i} pred: {pred[:5]}", local_rank=self.rank)
                     if 'label' in batch:
@@ -301,14 +326,22 @@ class Trainer:
 
     def get_model_components(self):
         if self.cfg.model.objective == 'jepa':
+            in_chans = len(self.train_cfg.fields) if self.train_cfg.get("fields", None) is not None else self.cfg.dataset.num_chans
             encoder, predictor, loss_fn = get_model_and_loss_cnn(
                 self.cfg.model.dims,
                 self.cfg.model.num_res_blocks,
                 self.cfg.dataset.num_frames,
-                in_chans=self.cfg.dataset.num_chans if 'fields' not in self.train_cfg else len(self.train_cfg.fields),
+                in_chans=in_chans,
                 sim_coeff=self.train_cfg.sim_coeff,
                 std_coeff=self.train_cfg.std_coeff,
                 cov_coeff=self.train_cfg.cov_coeff,
+                physics_aware=self.cfg.model.get("physics_aware", False),
+                field_aware_stem=self.cfg.model.get("field_aware_stem", None),
+                periodic_padding=self.cfg.model.get("periodic_padding", None),
+                temporal_downsample_start_stage=self.cfg.model.get("temporal_downsample_start_stage", None),
+                use_global_context_token=self.cfg.model.get("use_global_context_token", None),
+                field_group_sizes=self.cfg.model.get("field_group_sizes", None),
+                vit_equivalency=self.cfg.model.get("vit_equivalency", None),
             )
 
             if 'encoder_path' in self.train_cfg and self.train_cfg.encoder_path is not None:
@@ -363,7 +396,8 @@ class Trainer:
                 self.cfg.model.dims,
                 self.cfg.model.num_res_blocks,
                 self.cfg.dataset.num_frames,
-                in_chans=self.cfg.dataset.num_chans if 'fields' not in self.train_cfg else len(self.train_cfg.fields),
+                in_chans=len(self.train_cfg.fields) if self.train_cfg.get("fields", None) is not None else self.cfg.dataset.num_chans,
+                vit_equivalency=self.cfg.model.get("vit_equivalency", None),
             )
             metadata = get_dataset_metadata(self.cfg.dataset.name)
             head = AttentiveClassifier(
@@ -386,11 +420,11 @@ class Trainer:
             loss_fn = partial(vicreg_loss_bcs, sim_coeff=self.train_cfg.sim_coeff, bcs_coeff=self.train_cfg.bcs_coeff, num_slices=self.train_cfg.num_slices)
 
         if self.world_size > 1:
-            for component in model_components:
-                component = DDP(component.to(self.rank), device_ids=[self.rank])
+            for idx, component in enumerate(model_components):
+                model_components[idx] = DDP(component.to(self.rank), device_ids=[self.rank])
         else:
-            for component in model_components:
-                component = component.to(self.rank)
+            for idx, component in enumerate(model_components):
+                model_components[idx] = component.to(self.rank)
 
         return model_components, loss_fn
 

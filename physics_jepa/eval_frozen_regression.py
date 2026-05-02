@@ -14,7 +14,7 @@ from tqdm import tqdm
 from .data import get_dataset
 from .utils.data_utils import normalize_labels
 from .utils.hydra import compose
-from .utils.model_utils import ConvEncoder, ConvEncoderViTTiny
+from .model import build_encoder_from_cfg
 
 
 LABEL_STATS = {
@@ -147,21 +147,7 @@ def set_seed(seed: int):
 
 
 def build_encoder(cfg):
-    in_chans = cfg.dataset.num_chans
-    if cfg.model.get("vit_equivalency", None) == "tiny":
-        encoder = ConvEncoderViTTiny(
-            in_chans=in_chans,
-            num_res_blocks=cfg.model.num_res_blocks,
-            dims=cfg.model.dims,
-        )
-    else:
-        encoder = ConvEncoder(
-            in_chans=in_chans,
-            num_res_blocks=cfg.model.num_res_blocks,
-            dims=cfg.model.dims,
-            num_frames=cfg.dataset.num_frames,
-        )
-    return encoder
+    return build_encoder_from_cfg(cfg)
 
 
 def load_encoder(checkpoint_path: Path, cfg, device: torch.device):
