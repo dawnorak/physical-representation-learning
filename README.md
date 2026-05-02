@@ -17,6 +17,12 @@ pip install -e .
 
 Edit `scripts/env_setup.sh` to activate your virtual environment and set the path to [The Well](https://github.com/PolymathicAI/the_well) datasets. This file is sourced automatically by all scripts. The `THE_WELL_DATA_DIR` variable is required by all training and finetuning scripts that use The Well data.
 
+That file also hardcodes the W&B entity and project. Keep the API key out of the repo and export it in your shell before launching:
+
+```bash
+export WANDB_API_KEY="your_key_here"
+```
+
 ## Training
 
 ### 1. JEPA pretraining
