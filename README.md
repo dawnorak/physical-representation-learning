@@ -72,28 +72,30 @@ Each finetune script now supports direct defaults from `encoders/`:
 
 So if your files exist in `encoders/`, you can run validation with no extra arguments.
 
-### Special: run shipped model weights from `encoders/`
+## Test Model Weights
+
+This section is for validating shipped checkpoints from `encoders/`. For pretraining or finetuning other model variants, use the scripts under `experiment_run_scripts/` (`normal_script/` for local runs and `hpc_script/` for Slurm runs).
 
 Use the dedicated script:
 
 ```bash
-chmod +x test_model/run_saved_encoder_validation.sh
-./test_model/run_saved_encoder_validation.sh
+chmod +x ./run_saved_encoder_validation.sh
+./run_saved_encoder_validation.sh
 ```
 
 This script hardcodes:
 
-- checkpoint root: `/home/ubuntu/physical-representation-learning/encoders/`
-- config: `/home/ubuntu/physical-representation-learning/encoders/config.yaml`
+- checkpoint root: `./encoders/`
+- config: `./encoders/config.yaml`
 - default checkpoint: `vjepa.pth`
 - only `mkdir -p ./results` plus the Python validation command (no conda/env setup)
 
 You can optionally override checkpoint and results path:
 
 ```bash
-./test_model/run_saved_encoder_validation.sh \
-  /home/ubuntu/physical-representation-learning/encoders/conv_2p1d.pth \
-  /home/ubuntu/physical-representation-learning/results/encoders_conv_2p1d
+./run_saved_encoder_validation.sh \
+  ./encoders/conv_2p1d.pth \
+  ./results/encoders_conv_2p1d
 ```
 
 Underlying command used by the script:
