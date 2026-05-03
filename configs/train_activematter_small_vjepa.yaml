@@ -1,0 +1,64 @@
+defaults:
+  - dataset: active_matter
+  - model: vjepa_tiny
+  - ft: linear
+
+dataset:
+  num_frames: 16
+
+model:
+  objective: "jepa"
+
+train:
+  num_epochs: 30
+  batch_size: 8
+  report_every: 100
+  save_every: 2
+  include_labels: false
+  sim_coeff: 2
+  std_coeff: 40
+  cov_coeff: 2
+  predict_n_steps: false
+  lr_scheduler: "cosine"
+  lr_scheduler_warmup_epochs: 2
+  min_lr: 1e-6
+  lr: 1e-3
+  weight_decay: 0.05
+  noise_std: 1.0
+  temporal_masking: false
+  future_mask_frames: 4
+  multi_scale_temporal_context: false
+  multi_scale_temporal_stride: 4
+  vjepa_masking: true
+  vjepa_mask_cfgs:
+    - num_blocks: 8
+      spatial_scale: [0.15, 0.15]
+      temporal_scale: [1.0, 1.0]
+      aspect_ratio: [0.75, 1.5]
+      max_temporal_keep: 1.0
+      max_keep: null
+    - num_blocks: 2
+      spatial_scale: [0.7, 0.7]
+      temporal_scale: [1.0, 1.0]
+      aspect_ratio: [0.75, 1.5]
+      max_temporal_keep: 1.0
+      max_keep: null
+  run_name: "noise-std-1.0"
+  distributed: true
+  amp: true
+  amp_dtype: fp16
+
+ft:
+  task: "regression"
+  use_attentive_pooling: true
+  lr_scheduler: "cosine"
+  lr_scheduler_warmup_epochs: 2
+  min_lr: 0
+  lr: 1e-3
+  weight_decay: 0.01
+  noise_std: 1.0
+  run_name: "activematter-vjepa-FT-noise-std-1.0"
+  distributed: false
+
+out_path: "./checkpoints"
+cache_path: "./dataset_cache"

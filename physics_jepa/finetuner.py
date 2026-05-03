@@ -29,7 +29,11 @@ from .utils.model_utils import RegressionHead, RegressionMLP
 from .attentive_pooler import AttentiveClassifier
 from .utils.train_utils import accuracy
 from .train import Trainer
-from .videomae import vit_small_patch16_224, vit_base_patch16_224, vit_large_patch16_224, vit_huge_patch16_224
+
+try:
+    from .videomae import vit_small_patch16_224, vit_base_patch16_224, vit_large_patch16_224, vit_huge_patch16_224
+except Exception:
+    vit_small_patch16_224 = vit_base_patch16_224 = vit_large_patch16_224 = vit_huge_patch16_224 = None
 
 class BaseFinetuner(Trainer, ABC):
     def __init__(self, cfg, trained_model_path=None, rank=0, world_size=1):
@@ -481,7 +485,7 @@ class JepaFinetuner(BaseFinetuner):
         return encoder
     
     def create_head(self, metadata):
-        embed_dim = self.cfg.model.dims[-1]
+        embed_dim = self.cfg.model.get("embed_dim", self.cfg.model.dims[-1])
 
         if self.cfg.ft.get("use_attentive_pooling", False):
             # Use attentive pooling
@@ -532,8 +536,10 @@ class JepaFinetuner(BaseFinetuner):
         with torch.no_grad():
             enc_ctx = encoder(ctx)
             if self.cfg.ft.get("use_attentive_pooling", False):
-                # reshape to (batch_size, num_tokens, embed_dim)
-                enc_ctx = rearrange(enc_ctx, 'b c h w -> b (h w) c')
+                if enc_ctx.ndim == 5:
+                    enc_ctx = rearrange(enc_ctx, "b c t h w -> b (t h w) c")
+                elif enc_ctx.ndim == 4:
+                    enc_ctx = rearrange(enc_ctx, "b c h w -> b (h w) c")
             # Check for NaN values in the encoded context
             if torch.isnan(enc_ctx).any():
                 raise ValueError(f"NaN values detected in encoded context. Shape: {enc_ctx.shape}, NaN count: {torch.isnan(enc_ctx).sum()}")
@@ -543,6 +549,8 @@ class JepaFinetuner(BaseFinetuner):
 # VideoMAE Finetuner
 class VideoMAEFinetuner(BaseFinetuner):
     def load_model(self):
+        if vit_small_patch16_224 is None:
+            raise ImportError("VideoMAE finetuning requires timm, which is not installed in this environment")
         if self.trained_model_path is not None:
             model_config = json.load(open(Path(self.trained_model_path).parent / "config.json"))
             model_arch = model_config["model"] 
@@ -600,6 +608,8 @@ class VideoMAEFinetuner(BaseFinetuner):
         return encoder
 
     def create_head(self, metadata):
+        if vit_small_patch16_224 is None:
+            raise ImportError("VideoMAE finetuning requires timm, which is not installed in this environment")
         if self.trained_model_path is not None:
             model_config = json.load(open(Path(self.trained_model_path).parent / "config.json"))
             model_arch = model_config["model"] 

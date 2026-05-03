@@ -266,6 +266,11 @@ class Trainer:
             batch['target'] = tgt
             del tgt
 
+        if "vjepa_context_mask" in batch:
+            batch["vjepa_context_mask"] = batch["vjepa_context_mask"].to(device)
+        if "vjepa_pred_mask" in batch:
+            batch["vjepa_pred_mask"] = batch["vjepa_pred_mask"].to(device)
+
         autocast_context = (
             torch.autocast(device_type="cuda", dtype=self.amp_dtype)
             if self.use_amp
@@ -325,6 +330,7 @@ class Trainer:
         return val_losses_dict
 
     def get_model_components(self):
+        encoder_arch = self.cfg.model.get("encoder_arch", None)
         if self.cfg.model.objective == 'jepa':
             in_chans = len(self.train_cfg.fields) if self.train_cfg.get("fields", None) is not None else self.cfg.dataset.num_chans
             encoder, predictor, loss_fn = get_model_and_loss_cnn(
@@ -342,6 +348,20 @@ class Trainer:
                 use_global_context_token=self.cfg.model.get("use_global_context_token", None),
                 field_group_sizes=self.cfg.model.get("field_group_sizes", None),
                 vit_equivalency=self.cfg.model.get("vit_equivalency", None),
+                encoder_arch=encoder_arch,
+                img_size=self.cfg.dataset.get("resolution", None),
+                patch_size=self.cfg.model.get("patch_size", None),
+                tubelet_size=self.cfg.model.get("tubelet_size", None),
+                embed_dim=self.cfg.model.get("embed_dim", None),
+                depth=self.cfg.model.get("depth", None),
+                num_heads=self.cfg.model.get("num_heads", None),
+                mlp_ratio=self.cfg.model.get("mlp_ratio", None),
+                drop_rate=self.cfg.model.get("drop_rate", 0.0),
+                attn_drop_rate=self.cfg.model.get("attn_drop_rate", 0.0),
+                drop_path_rate=self.cfg.model.get("drop_path_rate", 0.0),
+                use_learnable_pos_emb=self.cfg.model.get("use_learnable_pos_emb", False),
+                use_checkpoint=self.cfg.model.get("use_checkpoint", False),
+                uniform_power=self.cfg.model.get("uniform_power", False),
             )
 
             if 'encoder_path' in self.train_cfg and self.train_cfg.encoder_path is not None:
@@ -362,7 +382,7 @@ class Trainer:
             model_components = [encoder, predictor]
             if self.train_cfg.get("multi_scale_temporal_context", False):
                 embed_dim = self.cfg.model.dims[-1]
-                if self.cfg.model.get("vit_equivalency", None) == "tiny":
+                if encoder_arch == "vjepa" or self.cfg.model.get("vit_equivalency", None) == "tiny":
                     fusion = torch.nn.Conv3d(embed_dim * 2, embed_dim, kernel_size=1)
                 else:
                     fusion = torch.nn.Conv2d(embed_dim * 2, embed_dim, kernel_size=1)

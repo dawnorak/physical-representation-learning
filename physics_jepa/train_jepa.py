@@ -15,26 +15,35 @@ class JepaTrainer(Trainer):
         encoder, predictor = model_components[:2]
         fusion = model_components[2] if len(model_components) > 2 else None
 
-        ctx_embed = encoder(batch['context'])
+        ctx = batch['context']
+        if "vjepa_context_mask" in batch:
+            ctx = ctx * batch["vjepa_context_mask"]
+
+        ctx_embed = encoder(ctx)
         if fusion is not None:
             temporal_stride = self.train_cfg.get("multi_scale_temporal_stride", 4)
-            global_ctx = batch['context'][:, :, ::temporal_stride, :, :]
+            global_ctx = ctx[:, :, ::temporal_stride, :, :]
             global_ctx = F.interpolate(
                 global_ctx,
-                size=batch['context'].shape[2:],
+                size=ctx.shape[2:],
                 mode='nearest',
             )
             global_ctx_embed = encoder(global_ctx)
             ctx_embed = fusion(torch.cat([ctx_embed, global_ctx_embed], dim=1))
 
-        tgt_embed = encoder(batch['target'])
+        tgt = batch["target"]
+        if "vjepa_context_mask" in batch:
+            # Keep the target unmasked, but let the loss focus on masked tokens.
+            tgt = tgt
+        tgt_embed = encoder(tgt)
         pred = predictor(ctx_embed)
-        
+
+        mask = batch.get("vjepa_pred_mask", None)
         # Compute loss on projected embeddings
         if len(pred.shape) < 5:
-            loss_dict = loss_fn(pred.unsqueeze(2), tgt_embed.unsqueeze(2))
+            loss_dict = loss_fn(pred.unsqueeze(2), tgt_embed.unsqueeze(2), mask=mask)
         else:
-            loss_dict = loss_fn(pred, tgt_embed)
+            loss_dict = loss_fn(pred, tgt_embed, mask=mask)
 
         return pred, loss_dict
 
