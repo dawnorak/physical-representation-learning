@@ -13,3 +13,8 @@ cd /path/to/physics_jepa_public
 
 # Set the path to The Well datasets:
 export THE_WELL_DATA_DIR=/path/to/the_well/datasets
+
+# W&B defaults. Keep the API key out of the repo and export it in your shell:
+# export WANDB_API_KEY="your_key_here"
+export WANDB_ENTITY="ssb10002-new-york-university"
+export WANDB_PROJECT="physics-jepa"

@@ -1,0 +1,29 @@
+name: active_matter_vjepa_tiny
+objective: "jepa"
+encoder_arch: "vjepa"
+
+# Keep the output contract aligned with the existing backbones.
+dims: [384]
+num_res_blocks: [3]
+
+# Active-matter-specific transformer settings.
+# Shorter tubelets preserve more temporal detail in these dynamics.
+patch_size: 8
+tubelet_size: 4
+embed_dim: 384
+depth: 12
+num_heads: 6
+mlp_ratio: 4.0
+drop_rate: 0.0
+attn_drop_rate: 0.0
+drop_path_rate: 0.0
+use_learnable_pos_emb: false
+use_checkpoint: false
+uniform_power: false
+
+physics_aware: false
+field_aware_stem: null
+periodic_padding: null
+temporal_downsample_start_stage: null
+use_global_context_token: false
+field_group_sizes: null
