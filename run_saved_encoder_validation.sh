@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p "$REPO_ROOT/results"
 
 # Hardcoded defaults to use model assets from encoders/
-ENCODER_CKPT="${1:-$REPO_ROOT/encoders/vjepa.pth}"
+ENCODER_CKPT="${1:-$REPO_ROOT/encoders/VJepaVisionTransformer.pth}"
 MODEL_CONFIG="$REPO_ROOT/encoders/config.yaml"
 RESULTS_DIR="${2:-$REPO_ROOT/results/encoders_validation}"
 

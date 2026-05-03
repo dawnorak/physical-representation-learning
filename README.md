@@ -87,7 +87,7 @@ This script hardcodes:
 
 - checkpoint root: `./encoders/`
 - config: `./encoders/config.yaml`
-- default checkpoint: `vjepa.pth`
+- default checkpoint: `VJepaVisionTransformer.pth`
 - only `mkdir -p ./results` plus the Python validation command (no conda/env setup)
 
 You can optionally override checkpoint and results path:
