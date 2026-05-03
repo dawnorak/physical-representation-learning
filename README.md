@@ -1,5 +1,7 @@
 This is the official repository for the Deep Learning project code on representation learning for spatiotemporal physical systems.
 
+**Note (model assets):** Due to Git LFS constraints, full model checkpoints and the matching Hydra config are not distributed through this repository. They are provided via the Drive link shared with the project report. Download the files you need and place them under `encoders/` in this repo (for example `encoders/ConvEncoder.pth` and `encoders/config.yaml`). For a sample end-to-end validation run, `run_saved_encoder_validation.sh` hardcodes `encoders/ConvEncoder.pth` with `encoders/config.yaml`.
+
 ## Setup
 
 ### 1) Create and activate a Python environment
@@ -20,11 +22,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Install a PyTorch build compatible with your CUDA runtime if needed. Then install the package in editable mode:
-
-```bash
-pip install -e .
-```
+Install a PyTorch build compatible with your CUDA runtime if needed.
 
 ### 3) Set required environment variables
 
@@ -65,12 +63,7 @@ HPC equivalents can be submitted with `sbatch`.
 
 Saved encoder checkpoints can be validated with the finetune/validation scripts in `experiment_run_scripts`.
 
-Each finetune script now supports direct defaults from `encoders/`:
-
-- default checkpoint: `encoders/<model_name>.pth`
-- default config: `encoders/config.yaml`
-
-So if your files exist in `encoders/`, you can run validation with no extra arguments.
+Each finetune script supports defaults derived from its filename (for example, `finetune_vjepa.sh` defaults to `encoders/vjepa.pth` and `encoders/config.yaml`). Copy the matching checkpoint and config from Drive into `encoders/`, or pass explicit paths as arguments to the script.
 
 ## Test Model Weights
 
@@ -79,6 +72,7 @@ This section is for validating shipped checkpoints from `encoders/`. For pretrai
 Use the dedicated script:
 
 ```bash
+export THE_WELL_DATA_DIR=/path/to/well/root
 chmod +x ./run_saved_encoder_validation.sh
 ./run_saved_encoder_validation.sh
 ```
@@ -87,19 +81,21 @@ This script hardcodes:
 
 - checkpoint root: `./encoders/`
 - config: `./encoders/config.yaml`
-- default checkpoint: `VJepaVisionTransformer.pth`
-- only `mkdir -p ./results` plus the Python validation command (no conda/env setup)
+- default checkpoint: `ConvEncoder.pth` (conv-small-temporal sample shipped for the report)
+- only `mkdir -p ./results` plus the Python validation command (no conda setup in the script; you must set `THE_WELL_DATA_DIR` and have dependencies installed as in Setup)
+- optional: `MODEL_CONFIG=/path/to/config.yaml ./run_saved_encoder_validation.sh` to use a Drive-provided config without renaming it to `encoders/config.yaml`
 
-You can optionally override checkpoint and results path:
+You can optionally override checkpoint and results path (for example, after copying other checkpoints and configs from Drive into `encoders/`):
 
 ```bash
 ./run_saved_encoder_validation.sh \
-  ./encoders/conv_2p1d.pth \
-  ./results/encoders_conv_2p1d
+  ./encoders/ConvEncoder.pth \
+  ./results/encoders_validation
 ```
 
 Underlying command used by the script:
 
+```bash
 python -m physics_jepa.eval_frozen_regression \
   --dataset_name active_matter \
   --encoder_checkpoint "$ENCODER_CKPT" \
