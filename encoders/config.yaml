@@ -6,31 +6,18 @@ dataset:
   resolution: 128
   offset: 1
 model:
-  name: vjepa_tiny
-  objective: jepa
-  encoder_arch: vjepa
   dims:
-  - 512
+  - 16
+  - 32
+  - 64
+  - 128
   num_res_blocks:
   - 3
-  patch_size: 8
-  tubelet_size: null
-  embed_dim: 512
-  depth: 12
-  num_heads: 8
-  mlp_ratio: 4.0
-  drop_rate: 0.0
-  attn_drop_rate: 0.0
-  drop_path_rate: 0.0
-  use_learnable_pos_emb: false
-  use_checkpoint: false
-  uniform_power: false
-  physics_aware: false
-  field_aware_stem: null
-  periodic_padding: null
-  temporal_downsample_start_stage: null
-  use_global_context_token: false
-  field_group_sizes: null
+  - 3
+  - 9
+  - 3
+  name: cnn
+  objective: jepa
 ft:
   num_epochs: 100
   lr: 0.001
@@ -46,13 +33,13 @@ ft:
   min_lr: 0
   weight_decay: 0.01
   noise_std: 1.0
-  run_name: activematter-vjepa-FT-noise-std-1.0
+  run_name: activematter-jepa-FT-noise-std-1.0
   distributed: false
 train:
   num_epochs: 20
-  batch_size: 32
-  report_every: 50
-  save_every: 1
+  batch_size: 24
+  report_every: 100
+  save_every: 5
   include_labels: false
   sim_coeff: 2
   std_coeff: 40
@@ -61,44 +48,16 @@ train:
   lr_scheduler: cosine
   lr_scheduler_warmup_epochs: 2
   min_lr: 1.0e-06
-  lr: 0.0003
+  lr: 0.001
   weight_decay: 0.05
-  max_grad_norm: 1.0
   noise_std: 1.0
-  temporal_masking: false
+  temporal_masking: true
   future_mask_frames: 4
-  multi_scale_temporal_context: false
+  multi_scale_temporal_context: true
   multi_scale_temporal_stride: 4
-  vjepa_masking: true
-  vjepa_mask_cfgs:
-  - num_blocks: 8
-    spatial_scale:
-    - 0.15
-    - 0.15
-    temporal_scale:
-    - 1.0
-    - 1.0
-    aspect_ratio:
-    - 0.75
-    - 1.5
-    max_temporal_keep: 1.0
-    max_keep: null
-  - num_blocks: 2
-    spatial_scale:
-    - 0.7
-    - 0.7
-    temporal_scale:
-    - 1.0
-    - 1.0
-    aspect_ratio:
-    - 0.75
-    - 1.5
-    max_temporal_keep: 1.0
-    max_keep: null
-  run_name: train_vjepa
+  precision: fp32
+  run_name: am_temporal_masking_a100
   distributed: false
-  amp: false
-  amp_dtype: fp16
   save_every_steps: 2000
 out_path: ./checkpoints
 cache_path: ./dataset_cache
