@@ -37,11 +37,6 @@ class Trainer:
         self.amp_dtype = torch.bfloat16 if self.precision == "bf16" else torch.float16
         self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.precision == "fp16")
 
-        if self.cfg.model.get("vit_equivalency", None) == 'tiny':
-            assert self.cfg.model.dims[-1] == 384, "dims must be [48, 96, 192, 384] for tiny vit equivalency"
-            assert self.cfg.dataset.get('resolution', None) == 224, "resolution must be 224 for tiny vit equivalency"
-            assert self.cfg.dataset.get('num_frames', None) == 4, "num_frames must be 4 for current implementation of tiny vit equivalency"
-
         if os.environ.get("LOCAL_RANK", None) is not None:
             ddp_setup()
             self.rank = dist.get_rank()

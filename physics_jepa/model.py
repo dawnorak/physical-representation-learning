@@ -12,9 +12,13 @@ from physics_jepa.utils.model_utils import (
     ConvPredictor,
     ConvPredictorViTTiny,
     ConvDecoder,
-    MultiscaleConvEncoder,
 )
 from physics_jepa.vjepa import VJepaVisionTransformer
+
+try:
+    from physics_jepa.utils.model_utils import MultiscaleConvEncoder
+except ImportError:
+    MultiscaleConvEncoder = None
 
 
 def _infer_in_chans(cfg, in_chans=None, stage_cfg=None):
@@ -44,6 +48,11 @@ def _build_cnn_encoder(
     field_group_sizes=None,
 ):
     if physics_aware:
+        if MultiscaleConvEncoder is None:
+            raise ImportError(
+                "physics_aware=True requires MultiscaleConvEncoder, but it is not "
+                "available in physics_jepa/utils/model_utils.py."
+            )
         field_aware_stem = True if field_aware_stem is None else bool(field_aware_stem)
         periodic_padding = True if periodic_padding is None else bool(periodic_padding)
         if temporal_downsample_start_stage is None:

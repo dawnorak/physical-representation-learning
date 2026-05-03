@@ -134,6 +134,7 @@ class ConvEncoder(nn.Module):
                  encoder_block_type="standard"):
         super().__init__()
         self.encoder_block_type = encoder_block_type
+        self.res_block_num_spatial_dims = []
         stem = nn.Sequential(
             nn.Conv3d(in_chans, dims[0], kernel_size=(1, 4, 4), padding='same'),
             LayerNorm(dims[0], data_format="channels_first"),
@@ -169,6 +170,7 @@ class ConvEncoder(nn.Module):
                         *[block_cls(dims[i], **block_kwargs) for _ in range(num_res_blocks[i])]
                     )
                 )
+                self.res_block_num_spatial_dims.append(3 if i < len(dims) - 1 else 2)
 
         elif num_frames == 4:
             for i in range(3):
@@ -206,6 +208,7 @@ class ConvEncoder(nn.Module):
                         *[block_cls(dims[i], **block_kwargs) for _ in range(num_res_blocks[i])]
                     )
                 )
+                self.res_block_num_spatial_dims.append(3 if i < 3 else 2)
 
         else:
             raise ValueError(f"Currently supports 4 and 16 frames, input num_frames: {num_frames}")
@@ -215,7 +218,14 @@ class ConvEncoder(nn.Module):
     def forward(self, x, **kwargs):
         for i in range(len(self.dims)):
             x = self.downsample_layers[i](x)
-            x = x.squeeze(2)
+            if x.ndim == 5:
+                if x.shape[2] == 1:
+                    x = x.squeeze(2)
+                elif self.res_block_num_spatial_dims[i] == 2:
+                    # Legacy active-matter 16-frame CNNs keep T>1 until the last
+                    # stage, but the final residual block is 2D. Collapse time
+                    # explicitly so both old and new checkpoints remain usable.
+                    x = x.mean(dim=2)
             x = self.res_blocks[i](x)
         return x
 
