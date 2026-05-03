@@ -23,7 +23,7 @@ import re
 from sklearn.metrics import f1_score
 
 from .data import EmbeddingsDataset, get_dataset_metadata, get_train_dataloader, get_val_dataloader
-from .model import get_model_and_loss_cnn, get_autoencoder
+from .model import build_encoder_from_cfg, get_autoencoder
 from .utils.data_utils import normalize_labels
 from .utils.model_utils import RegressionHead, RegressionMLP
 from .attentive_pooler import AttentiveClassifier
@@ -472,13 +472,7 @@ class BaseFinetuner(Trainer, ABC):
 # JEPA Finetuner
 class JepaFinetuner(BaseFinetuner):
     def load_model(self):
-        encoder, _, _ = get_model_and_loss_cnn(
-            self.cfg.model.dims,
-            self.cfg.model.num_res_blocks,
-            self.cfg.dataset.num_frames,
-            in_chans=self.cfg.dataset.num_chans if 'fields' not in self.cfg.ft else len(self.cfg.ft.fields),
-            encoder_block_type=self.cfg.model.get("encoder_block_type", "standard"),
-        )
+        encoder = build_encoder_from_cfg(self.cfg, stage_cfg=self.cfg.ft)
         if self.trained_model_path is not None:
             print(f"loading state dict from {self.trained_model_path}", flush=True)
             state_dict = torch.load(self.trained_model_path)
