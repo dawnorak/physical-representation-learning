@@ -37,8 +37,6 @@ class WellDatasetForJEPA(Dataset):
         stride: int = None, # temporal overlap of training examples, default is num_frames
         subset_config_path: Optional[str | Path] = None, # path to config file containing subset_indices
         noise_std: float = 0.0, # standard deviation of Gaussian noise to add
-        temporal_masking: bool = False,
-        future_mask_frames: int = 0,
         # HDF5 handle/cache tuning:
         max_open_files: int = 6,
         rdcc_nbytes: int = 512 * 1024**2,
@@ -56,20 +54,8 @@ class WellDatasetForJEPA(Dataset):
         self.stride = stride
         self.resolution = resolution
         self.noise_std = float(noise_std)
-        self.temporal_masking = bool(temporal_masking)
-        self.future_mask_frames = int(future_mask_frames)
         if self.noise_std > 0:
             print(f"Adding Gaussian noise with std {self.noise_std}", flush=True)
-        if self.temporal_masking:
-            if not (0 < self.future_mask_frames < self.num_frames):
-                raise ValueError(
-                    "future_mask_frames must be > 0 and < num_frames when temporal_masking is enabled"
-                )
-            print(
-                f"Temporal masking enabled: masking last {self.future_mask_frames} "
-                f"frames, context length {self.num_frames - self.future_mask_frames}",
-                flush=True,
-            )
 
         # Load subset indices if provided
         self.subset_indices = None
@@ -94,26 +80,18 @@ class WellDatasetForJEPA(Dataset):
         self.index, self.physical_params_idx = self._build_index()
         print(f"Found {len(self.index)} examples", flush=True)
         print(f"Physical params: {self.physical_params_idx}", flush=True)
+        self._build_global_field_schema(Path(self.data_dir) / self.index[0][0])
 
         if len(self.index) == 0:
-            raise ValueError(
-                f"No valid windows found under {self.data_dir}. "
-                "Check num_frames, stride, temporal_masking, and that the shard files contain enough frames."
-            )
-
-        self._build_global_field_schema(Path(self.data_dir) / self.index[0][0])
+            raise ValueError("No valid windows found. "
+                             "Check num_frames and that trajectories have at least 2*num_frames frames.")
 
     # ---- Discovery & indexing ----
 
     def _build_index(self) -> Tuple[List[tuple[int, int, int]], Dict[str, List[np.ndarray]]]:
         """
-        Standard mode:
-          Valid start t0 satisfy: t0 + 2*num_frames <= T.
-          ctx=[t0, t0+F), tgt=[t0+F, t0+2F).
-
-        Temporal masking mode:
-          Valid start t0 satisfy: t0 + num_frames <= T.
-          ctx and tgt come from the same clip; ctx masks the future frames.
+        Valid start t0 satisfy: t0 + 2*num_frames <= T.
+        We step by 1 to allow maximal coverage; ctx=[t0, t0+F), tgt=[t0+F, t0+2F).
         """
         
         idx: List[tuple[int, int, int]] = []
@@ -126,8 +104,7 @@ class WellDatasetForJEPA(Dataset):
             with h5py.File(path, 'r') as f:
                 example_scalar_field = f['t0_fields'][list(f['t0_fields'].keys())[0]]
                 T = int(example_scalar_field.shape[1]) # expected shape: num_objs t h w
-                required_frames = F if self.temporal_masking else 2 * F
-                max_t0 = T - required_frames
+                max_t0 = T - 2 * F
                 if max_t0 < 0:
                     continue
                 stride = self.stride if self.stride is not None else F
@@ -222,8 +199,7 @@ class WellDatasetForJEPA(Dataset):
             h_slice = slice(None)
             w_slice = slice(None)
 
-        read_frames = F if self.temporal_masking else 2 * F
-        sel_prefix = (local_obj_idx, slice(t0, t0 + read_frames), h_slice, w_slice)
+        sel_2f_prefix = (local_obj_idx, slice(t0, t0 + 2*F), h_slice, w_slice)
 
         # per-worker cache of temporary buffers keyed by component shape
         tmp_cache = state.setdefault("twobuf_cache", {})  # e.g., {(): arr(2F,H,W), (2,): arr(2F,H,W,2), (2,2): arr(2F,H,W,2,2)}
@@ -234,29 +210,22 @@ class WellDatasetForJEPA(Dataset):
             ds = self._get_ds_handle(f, state, path)
 
              # ensure a reusable temp buffer of shape (2F, H, W, *comp_shape)
-            need_shape = (read_frames, H, W) + comp_shape
+            need_shape = (2*F, H, W) + comp_shape
             buf = tmp_cache.get(comp_shape)
             if buf is None or buf.shape != need_shape or buf.dtype != self._dtype:
                 buf = np.empty(need_shape, dtype=self._dtype, order="C")
                 tmp_cache[comp_shape] = buf
 
             # build full source sel including component dims
-            sel = sel_prefix + (slice(None),) * len(comp_shape)
+            sel = sel_2f_prefix + (slice(None),) * len(comp_shape)
             ds.read_direct(buf, source_sel=sel)  # one I/O per field
 
             # flatten component axes to channels view and split into ctx/tgt
-            view = buf.reshape(read_frames, H, W, dsize)   # no copy; C-order
+            view = buf.reshape(2*F, H, W, dsize)   # no copy; C-order
             c1 = c0 + dsize
-            if self.temporal_masking:
-                ctx[..., c0:c1] = view[:F]
-                tgt[..., c0:c1] = view[:F]
-            else:
-                ctx[..., c0:c1] = view[:F]
-                tgt[..., c0:c1] = view[F:]
+            ctx[..., c0:c1] = view[:F]
+            tgt[..., c0:c1] = view[F:]
             c0 = c1
-
-        if self.temporal_masking:
-            ctx[-self.future_mask_frames:] = 0
 
         # -> torch (C, T, H, W)
         ctx_t = torch.from_numpy(ctx).permute(3, 0, 1, 2).contiguous()
@@ -656,8 +625,6 @@ def get_dataset(
     offset=None,
     subset_config_path=None,
     noise_std=0.0,
-    temporal_masking=False,
-    future_mask_frames=0,
 ):
 
     resolution = (resolution, resolution) if isinstance(resolution, int) else resolution
@@ -673,8 +640,6 @@ def get_dataset(
         stride=offset,
         subset_config_path=subset_config_path,
         noise_std=noise_std,
-        temporal_masking=temporal_masking,
-        future_mask_frames=future_mask_frames,
     )
 
 def get_dataset_metadata(dataset_name):
@@ -712,8 +677,6 @@ def get_train_dataloader_from_cfg(cfg, stage="train", rank=None, world_size=None
         offset=cfg.dataset.get("offset", None),
         subset_config_path=cfg.dataset.get("subset_config_path", None),
         noise_std=cfg[stage].get("noise_std", 0.0),
-        temporal_masking=cfg[stage].get("temporal_masking", False),
-        future_mask_frames=cfg[stage].get("future_mask_frames", 0),
     )
 
 def get_val_dataloader_from_cfg(cfg, stage="train", rank=None, world_size=None):
@@ -733,8 +696,6 @@ def get_val_dataloader_from_cfg(cfg, stage="train", rank=None, world_size=None):
         resolution=cfg.dataset.get("resolution", None),
         offset=cfg.dataset.get("offset", None),
         noise_std=cfg[stage].get("noise_std", 0.0),
-        temporal_masking=cfg[stage].get("temporal_masking", False),
-        future_mask_frames=cfg[stage].get("future_mask_frames", 0),
     )
 
 def get_train_dataloader(
@@ -760,8 +721,6 @@ def get_train_dataloader(
         offset=None,
         subset_config_path=None,
         noise_std=0.0,
-        temporal_masking=False,
-        future_mask_frames=0,
     ):
     dataset = get_dataset(dataset_name,
                           num_frames, 
@@ -777,8 +736,6 @@ def get_train_dataloader(
                           offset=offset,
                           subset_config_path=subset_config_path,
                           noise_std=noise_std,
-                          temporal_masking=temporal_masking,
-                          future_mask_frames=future_mask_frames,
                         )
     if rank == 0:
         print(f"total number of block pairs in train dataset: {len(dataset)}")
@@ -837,8 +794,6 @@ def get_val_dataloader(
         resolution=None,
         offset=None,
         noise_std=0.0,
-        temporal_masking=False,
-        future_mask_frames=0,
     ):
     dataset = get_dataset(dataset_name, 
                           num_frames, 
@@ -853,8 +808,6 @@ def get_val_dataloader(
                           resolution=resolution,
                           offset=offset,
                           noise_std=noise_std,
-                          temporal_masking=temporal_masking,
-                          future_mask_frames=future_mask_frames,
                         )
     if world_size == 1:
         sampler = None

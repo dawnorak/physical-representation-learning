@@ -273,6 +273,21 @@ class Trainer:
                 for i, component in enumerate(model_components):
                     torch.save(component.state_dict(), out_path / f"{component.__class__.__name__}_{epoch}.pth")
 
+        if self.rank == 0 and self.train_cfg.get("num_epochs", 0) > 0:
+            if not out_path.exists():
+                out_path.mkdir(parents=True)
+                cfg_path = out_path / "config.yaml"
+                OmegaConf.save(self.cfg, cfg_path)
+            final_epoch = self.train_cfg.num_epochs - 1
+            for component in model_components:
+                # Backfill missing last-epoch checkpoint when save_every skips it.
+                final_epoch_path = out_path / f"{component.__class__.__name__}_{final_epoch}.pth"
+                if not final_epoch_path.exists():
+                    torch.save(component.state_dict(), final_epoch_path)
+                # Always save an explicit final alias for easy downstream use.
+                torch.save(component.state_dict(), out_path / f"{component.__class__.__name__}_final.pth")
+            print(f"final checkpoint saved to {out_path}")
+
         distprint(f"all checkpoints saved to {out_path}", local_rank=self.rank)
 
     def step(self, batch, model_components, loss_fn, device, log=False):
@@ -330,17 +345,7 @@ class Trainer:
         val_losses_dict = defaultdict(list)
         for i, batch in enumerate(self.val_loader):
             with torch.no_grad():
-                use_amp = self.train_cfg.get("amp", False)
-                amp_dtype_name = str(self.train_cfg.get("amp_dtype", "fp16")).lower()
-                if amp_dtype_name == "fp16":
-                    amp_dtype = torch.float16
-                elif amp_dtype_name == "bf16":
-                    amp_dtype = torch.bfloat16
-                else:
-                    raise ValueError(f"Invalid amp_dtype: {amp_dtype_name}. Expected 'fp16' or 'bf16'")
-
-                with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
-                    pred, loss_dict = self.step(batch, model_components, loss_fn, self.rank)
+                pred, loss_dict = self.step(batch, model_components, loss_fn, self.rank)
                 if i == 0:
                     distprint(f"val batch {i} pred: {pred[:5]}", local_rank=self.rank)
                     if 'label' in batch:
@@ -362,15 +367,15 @@ class Trainer:
     def get_model_components(self):
         encoder_arch = self.cfg.model.get("encoder_arch", None)
         if self.cfg.model.objective == 'jepa':
-            in_chans = len(self.train_cfg.fields) if self.train_cfg.get("fields", None) is not None else self.cfg.dataset.num_chans
             encoder, predictor, loss_fn = get_model_and_loss_cnn(
                 self.cfg.model.dims,
                 self.cfg.model.num_res_blocks,
                 self.cfg.dataset.num_frames,
-                in_chans=in_chans,
+                in_chans=self.cfg.dataset.num_chans if 'fields' not in self.train_cfg else len(self.train_cfg.fields),
                 sim_coeff=self.train_cfg.sim_coeff,
                 std_coeff=self.train_cfg.std_coeff,
                 cov_coeff=self.train_cfg.cov_coeff,
+                encoder_block_type=self.cfg.model.get("encoder_block_type", "standard"),
                 physics_aware=self.cfg.model.get("physics_aware", False),
                 field_aware_stem=self.cfg.model.get("field_aware_stem", None),
                 periodic_padding=self.cfg.model.get("periodic_padding", None),
@@ -446,8 +451,8 @@ class Trainer:
                 self.cfg.model.dims,
                 self.cfg.model.num_res_blocks,
                 self.cfg.dataset.num_frames,
-                in_chans=len(self.train_cfg.fields) if self.train_cfg.get("fields", None) is not None else self.cfg.dataset.num_chans,
-                vit_equivalency=self.cfg.model.get("vit_equivalency", None),
+                in_chans=self.cfg.dataset.num_chans if 'fields' not in self.train_cfg else len(self.train_cfg.fields),
+                encoder_block_type=self.cfg.model.get("encoder_block_type", "standard"),
             )
             metadata = get_dataset_metadata(self.cfg.dataset.name)
             head = AttentiveClassifier(
@@ -470,11 +475,11 @@ class Trainer:
             loss_fn = partial(vicreg_loss_bcs, sim_coeff=self.train_cfg.sim_coeff, bcs_coeff=self.train_cfg.bcs_coeff, num_slices=self.train_cfg.num_slices)
 
         if self.world_size > 1:
-            for idx, component in enumerate(model_components):
-                model_components[idx] = DDP(component.to(self.rank), device_ids=[self.rank])
+            for component in model_components:
+                component = DDP(component.to(self.rank), device_ids=[self.rank])
         else:
-            for idx, component in enumerate(model_components):
-                model_components[idx] = component.to(self.rank)
+            for component in model_components:
+                component = component.to(self.rank)
 
         return model_components, loss_fn
 

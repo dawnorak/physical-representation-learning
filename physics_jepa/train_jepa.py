@@ -18,7 +18,6 @@ class JepaTrainer(Trainer):
         fusion = model_components[2] if len(model_components) > 2 else None
 
         ctx = batch['context']
-        mask = None
         if self.cfg.model.get("encoder_arch", None) == "vjepa" and self.train_cfg.get("vjepa_masking", False):
             vjepa_mask_cfgs = self.train_cfg.get("vjepa_mask_cfgs", None)
             if not vjepa_mask_cfgs:
@@ -72,8 +71,10 @@ if __name__ == "__main__":
     cfg = compose(args.config, args.overrides)
     OmegaConf.set_struct(cfg, False)
     cfg.dry_run = args.dry_run
-    # cfg.train.encoder_path = args.encoder_path
-    # cfg.train.predictor_path = args.predictor_path
+    if args.encoder_path is not None:
+        cfg.train.encoder_path = args.encoder_path
+    if args.predictor_path is not None:
+        cfg.train.predictor_path = args.predictor_path
     
     cfg.model.objective = "jepa"
 

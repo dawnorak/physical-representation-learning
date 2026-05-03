@@ -35,6 +35,7 @@ def _build_cnn_encoder(
     num_res_blocks,
     num_frames,
     in_chans=2,
+    encoder_block_type="standard",
     physics_aware=False,
     field_aware_stem=None,
     periodic_padding=None,
@@ -66,6 +67,7 @@ def _build_cnn_encoder(
         num_res_blocks=num_res_blocks,
         dims=dims,
         num_frames=num_frames,
+        encoder_block_type=encoder_block_type,
     )
 
 
@@ -146,6 +148,7 @@ def build_encoder_from_cfg(cfg, in_chans=None, stage_cfg=None):
         num_res_blocks=cfg.model.num_res_blocks,
         num_frames=cfg.dataset.num_frames,
         in_chans=resolved_in_chans,
+        encoder_block_type=cfg.model.get("encoder_block_type", "standard"),
         physics_aware=cfg.model.get("physics_aware", False),
         field_aware_stem=cfg.model.get("field_aware_stem", None),
         periodic_padding=cfg.model.get("periodic_padding", None),
@@ -153,7 +156,6 @@ def build_encoder_from_cfg(cfg, in_chans=None, stage_cfg=None):
         use_global_context_token=cfg.model.get("use_global_context_token", None),
         field_group_sizes=cfg.model.get("field_group_sizes", None),
     )
-
 
 def get_model_and_loss_cnn(
     dims,
@@ -163,6 +165,7 @@ def get_model_and_loss_cnn(
     sim_coeff=25,
     std_coeff=25,
     cov_coeff=1,
+    encoder_block_type="standard",
     physics_aware=False,
     field_aware_stem=None,
     periodic_padding=None,
@@ -224,6 +227,7 @@ def get_model_and_loss_cnn(
             num_res_blocks=num_res_blocks,
             num_frames=num_frames,
             in_chans=in_chans,
+            encoder_block_type=encoder_block_type,
             physics_aware=physics_aware,
             field_aware_stem=field_aware_stem,
             periodic_padding=periodic_padding,
@@ -236,10 +240,7 @@ def get_model_and_loss_cnn(
                 std_coeff=std_coeff,
                 cov_coeff=cov_coeff,
                 n_chunks=5)
-    if vit_equivalency == "tiny":
-        predictor = ConvPredictorViTTiny(dims=list(reversed(encoder.dims))[:2])
-    else:
-        predictor = ConvPredictor(dims=list(reversed(encoder.dims))[:2])
+    predictor = ConvPredictor(dims=list(reversed(encoder.dims))[:2])
     
     return encoder, predictor, loss
 

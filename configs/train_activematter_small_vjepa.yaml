@@ -1,6 +1,6 @@
 defaults:
   - dataset: active_matter
-  - model: vjepa_tiny
+  - model: active_matter_vjepa_tiny
   - ft: linear
 
 dataset:
