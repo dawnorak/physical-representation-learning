@@ -1,6 +1,8 @@
 This is the official repository for the Deep Learning project code on representation learning for spatiotemporal physical systems.
 
-**Note (model assets):** Due to Git LFS constraints, full model checkpoints and the matching Hydra config are not distributed through this repository. They are provided via the Drive link shared with the project report. Download the files you need and place them under `encoders/` in this repo (for example `encoders/ConvEncoder.pth` and `encoders/config.yaml`). For a sample end-to-end validation run, `run_saved_encoder_validation.sh` hardcodes `encoders/ConvEncoder.pth` with `encoders/config.yaml`.
+**Note (model assets):** Due to Git LFS constraints, full model checkpoints and the matching Hydra config are not distributed through this repository. They are provided via the Drive link shared with the project report. Download the files you need and place them under `encoders/` in this repo (for example `encoders/ConvEncoder.pth` and `encoders/config.yaml`). For a sample end-to-end validation run, `run_saved_encoder_validation.sh` hardcoded `encoders/ConvEncoder.pth` with `encoders/config.yaml`. 
+
+**OUR BEST MODEL IS V-JEPA, for the competition we would like you to place the model (in vjepa_checkpoints/VJepaVisionTransformer.pth and vjepa_checkpoints/config.yaml) into the encoders/ directory of this repo to get our performance.**
 
 ## Setup
 
