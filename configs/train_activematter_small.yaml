@@ -8,8 +8,9 @@ dataset:
 
 model:
   objective: "jepa"
-  physics_aware: true
-  use_global_context_token: false
+  dims: [16, 32, 64, 128, 128]
+  num_res_blocks: [3, 3, 3, 9, 3]
+  encoder_block_type: "factorized_2plus1d"
 
 train:
   num_epochs: 30
@@ -27,14 +28,8 @@ train:
   lr: 1e-3 # following 1e-3 * global_batch_size/256 rule
   weight_decay: 0.05
   noise_std: 1.0
-  temporal_masking: false
-  future_mask_frames: 4
-  multi_scale_temporal_context: false
-  multi_scale_temporal_stride: 4
   run_name: "noise-std-1.0"
   distributed: true
-  amp: true
-  amp_dtype: fp16
 
 ft:
   task: "regression"

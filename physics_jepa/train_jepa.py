@@ -1,8 +1,6 @@
 import argparse
 from pathlib import Path
 from omegaconf import OmegaConf
-import torch
-import torch.nn.functional as F
 
 from .train import Trainer
 from .utils.hydra import compose
@@ -12,21 +10,8 @@ class JepaTrainer(Trainer):
         super().__init__(cfg)
 
     def pred_fn(self, batch, model_components, loss_fn):
-        encoder, predictor = model_components[:2]
-        fusion = model_components[2] if len(model_components) > 2 else None
-
+        encoder, predictor = model_components
         ctx_embed = encoder(batch['context'])
-        if fusion is not None:
-            temporal_stride = self.train_cfg.get("multi_scale_temporal_stride", 4)
-            global_ctx = batch['context'][:, :, ::temporal_stride, :, :]
-            global_ctx = F.interpolate(
-                global_ctx,
-                size=batch['context'].shape[2:],
-                mode='nearest',
-            )
-            global_ctx_embed = encoder(global_ctx)
-            ctx_embed = fusion(torch.cat([ctx_embed, global_ctx_embed], dim=1))
-
         tgt_embed = encoder(batch['target'])
         pred = predictor(ctx_embed)
         
@@ -50,8 +35,10 @@ if __name__ == "__main__":
     cfg = compose(args.config, args.overrides)
     OmegaConf.set_struct(cfg, False)
     cfg.dry_run = args.dry_run
-    # cfg.train.encoder_path = args.encoder_path
-    # cfg.train.predictor_path = args.predictor_path
+    if args.encoder_path is not None:
+        cfg.train.encoder_path = args.encoder_path
+    if args.predictor_path is not None:
+        cfg.train.predictor_path = args.predictor_path
     
     cfg.model.objective = "jepa"
 

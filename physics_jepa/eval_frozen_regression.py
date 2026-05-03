@@ -1,6 +1,8 @@
 import argparse
+import inspect
 import json
 import random
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -9,12 +11,13 @@ from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.metrics import mean_squared_error
 from sklearn.neighbors import KNeighborsRegressor
 from torch.utils.data import DataLoader
+from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from .data import get_dataset
 from .utils.data_utils import normalize_labels
 from .utils.hydra import compose
-from .model import build_encoder_from_cfg
+from .utils.model_utils import ConvEncoder, ConvEncoderViTTiny
 
 
 LABEL_STATS = {
@@ -146,14 +149,89 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
+def unwrap_encoder_checkpoint(raw):
+    """Support flat encoder .pth or nested dicts with model/state_dict keys."""
+    if not isinstance(raw, dict):
+        return raw
+    if any(k.startswith(("res_blocks", "downsample")) for k in raw):
+        return raw
+    for key in ("model", "state_dict", "encoder", "model_state_dict"):
+        inner = raw.get(key)
+        if isinstance(inner, dict) and inner:
+            first = next(iter(inner.keys()))
+            if isinstance(first, str) and first.startswith(("res_blocks", "downsample")):
+                return inner
+    return raw
+
+
+def infer_encoder_block_type(state_dict):
+    """Detect factorized_2plus1d vs standard from checkpoint keys."""
+    keys = [k for k in state_dict if k.startswith("res_blocks.")]
+    if not keys:
+        return None
+    if any("temporal_conv" in k for k in keys):
+        return "factorized_2plus1d"
+    if any(".conv.weight" in k or ".conv.bias" in k for k in keys):
+        return "standard"
+    return None
+
+
 def build_encoder(cfg):
-    return build_encoder_from_cfg(cfg)
+    in_chans = cfg.dataset.num_chans
+    if cfg.model.get("vit_equivalency", None) == "tiny":
+        encoder = ConvEncoderViTTiny(
+            in_chans=in_chans,
+            num_res_blocks=cfg.model.num_res_blocks,
+            dims=cfg.model.dims,
+        )
+    else:
+        kwargs = {
+            "in_chans": in_chans,
+            "num_res_blocks": cfg.model.num_res_blocks,
+            "dims": cfg.model.dims,
+            "num_frames": cfg.dataset.num_frames,
+        }
+        block_type = cfg.model.get("encoder_block_type", "standard")
+        sig = inspect.signature(ConvEncoder.__init__)
+        if "encoder_block_type" in sig.parameters:
+            kwargs["encoder_block_type"] = block_type
+        elif block_type != "standard":
+            mod_file = inspect.getfile(ConvEncoder)
+            raise RuntimeError(
+                f"model.encoder_block_type is {block_type!r} (needed for this checkpoint), "
+                "but ConvEncoder.__init__ has no encoder_block_type argument.\n"
+                f"ConvEncoder was loaded from: {mod_file}\n"
+                "Deploy the repository's physics_jepa/utils/model_utils_updated.py (and the "
+                "shim model_utils.py that re-exports it), or a full model_utils.py with "
+                "ResidualBlock2Plus1D + ConvEncoder(..., encoder_block_type=...)."
+            )
+        encoder = ConvEncoder(**kwargs)
+    return encoder
 
 
 def load_encoder(checkpoint_path: Path, cfg, device: torch.device):
-    encoder = build_encoder(cfg)
-    state_dict = torch.load(checkpoint_path, map_location="cpu")
+    raw = torch.load(checkpoint_path, map_location="cpu")
+    state_dict = unwrap_encoder_checkpoint(raw)
     state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+    inferred = infer_encoder_block_type(state_dict)
+    configured = cfg.model.get("encoder_block_type", "standard")
+    if configured is None:
+        configured_str = "standard"
+    elif OmegaConf.is_config(configured):
+        configured_str = str(OmegaConf.to_container(configured, resolve=True))
+    else:
+        configured_str = str(configured)
+    # Checkpoint keys are authoritative for block type when we can infer them.
+    if inferred is not None:
+        if inferred != configured_str:
+            warnings.warn(
+                f"Checkpoint implies encoder_block_type={inferred!r} but model config has "
+                f"{configured_str!r}. Using checkpoint-derived type so weights load.",
+                UserWarning,
+                stacklevel=2,
+            )
+        OmegaConf.update(cfg, "model.encoder_block_type", inferred, merge=True)
+    encoder = build_encoder(cfg)
     encoder.load_state_dict(state_dict, strict=True)
     encoder.eval()
     encoder.to(device)

@@ -7,3 +7,4 @@ periodic_padding: null
 temporal_downsample_start_stage: null
 use_global_context_token: false
 field_group_sizes: null
+encoder_block_type: standard
