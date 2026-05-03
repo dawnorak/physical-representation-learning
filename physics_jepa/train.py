@@ -179,7 +179,16 @@ class Trainer:
                 else:
                     loss.backward()
 
-                if i % grad_accum_steps == 0:
+                should_step = ((i + 1) % grad_accum_steps == 0)
+                if should_step:
+                    max_grad_norm = float(self.train_cfg.get("max_grad_norm", 1.0))
+                    if max_grad_norm > 0:
+                        if use_scaler:
+                            scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(
+                            [p for component in model_components for p in component.parameters() if p.grad is not None],
+                            max_grad_norm,
+                        )
                     if use_scaler:
                         scaler.step(optimizer)
                         scaler.update()
@@ -197,7 +206,7 @@ class Trainer:
                 if i == 0:
                     distprint(f"batch {i} loss: {loss_dict['loss'].detach().cpu()}", local_rank=self.rank)
 
-                if i % self.train_cfg.report_every == 0:
+                if i > 0 and i % self.train_cfg.report_every == 0:
                     # Get current learning rate from schedule
                     distprint(f"step {i}", local_rank=self.rank)
                     current_lr = lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else self.train_cfg.lr
@@ -214,7 +223,11 @@ class Trainer:
                             self.time_to_completion(start_time, i, steps)
                         start_time = datetime.datetime.now()
                 
-                if self.train_cfg.get("save_every_steps", None) is not None and i % self.train_cfg.save_every_steps == 0:
+                if (
+                    self.train_cfg.get("save_every_steps", None) is not None
+                    and i > 0
+                    and i % self.train_cfg.save_every_steps == 0
+                ):
                     distprint(f"save_every_steps: {self.train_cfg.save_every_steps}, i: {i}", local_rank=self.rank)
                     if self.rank == 0:
                         if not out_path.exists():
@@ -227,6 +240,23 @@ class Trainer:
 
                 if self.train_cfg.get("steps", None) is not None and i > self.train_cfg.steps:
                     break
+
+            # Flush any remainder when the epoch length is not divisible by grad_accum_steps.
+            if len(self.train_loader) > 0 and (len(self.train_loader) % grad_accum_steps) != 0:
+                max_grad_norm = float(self.train_cfg.get("max_grad_norm", 1.0))
+                if max_grad_norm > 0:
+                    if use_scaler:
+                        scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for component in model_components for p in component.parameters() if p.grad is not None],
+                        max_grad_norm,
+                    )
+                if use_scaler:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
 
             for loss_name, loss_values in epoch_losses_dict.items():
                 epoch_losses_dict[loss_name] = torch.stack(loss_values).mean().item()

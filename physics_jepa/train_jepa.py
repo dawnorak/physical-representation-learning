@@ -36,7 +36,6 @@ class JepaTrainer(Trainer):
             ctx = ctx * ctx_mask
             batch["vjepa_context_mask"] = ctx_mask
             batch["vjepa_pred_mask"] = pred_mask
-            mask = pred_mask
 
         ctx_embed = encoder(ctx)
         if fusion is not None:
@@ -55,9 +54,9 @@ class JepaTrainer(Trainer):
         pred = predictor(ctx_embed)
         # Compute loss on projected embeddings
         if len(pred.shape) < 5:
-            loss_dict = loss_fn(pred.unsqueeze(2), tgt_embed.unsqueeze(2), mask=mask)
+            loss_dict = loss_fn(pred.unsqueeze(2), tgt_embed.unsqueeze(2))
         else:
-            loss_dict = loss_fn(pred, tgt_embed, mask=mask)
+            loss_dict = loss_fn(pred, tgt_embed)
 
         return pred, loss_dict
 

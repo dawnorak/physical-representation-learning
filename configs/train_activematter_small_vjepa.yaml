@@ -22,8 +22,9 @@ train:
   lr_scheduler: "cosine"
   lr_scheduler_warmup_epochs: 2
   min_lr: 1e-6
-  lr: 1e-3
+  lr: 3e-4
   weight_decay: 0.05
+  max_grad_norm: 1.0
   noise_std: 1.0
   temporal_masking: false
   future_mask_frames: 4
