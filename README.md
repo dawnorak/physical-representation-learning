@@ -72,6 +72,40 @@ Each finetune script now supports direct defaults from `encoders/`:
 
 So if your files exist in `encoders/`, you can run validation with no extra arguments.
 
+### Special: run shipped model weights from `encoders/`
+
+Use the dedicated script:
+
+```bash
+bash test_model/run_saved_encoder_validation.sh
+```
+
+This script hardcodes:
+
+- checkpoint root: `/home/ubuntu/physical-representation-learning/encoders/`
+- config: `/home/ubuntu/physical-representation-learning/encoders/config.yaml`
+- default checkpoint: `vjepa.pth`
+- only `mkdir -p ./results` plus the Python validation command (no conda/env setup)
+
+You can optionally override checkpoint and results path:
+
+```bash
+bash test_model/run_saved_encoder_validation.sh \
+  /home/ubuntu/physical-representation-learning/encoders/conv_2p1d.pth \
+  /home/ubuntu/physical-representation-learning/results/encoders_conv_2p1d
+```
+
+Underlying command used by the script:
+
+python -m physics_jepa.eval_frozen_regression \
+  --dataset_name active_matter \
+  --encoder_checkpoint "$ENCODER_CKPT" \
+  --model_config "$MODEL_CONFIG" \
+  --probe_type both \
+  --results_dir "$RESULTS_DIR" \
+  --num_workers 0
+```
+
 ### Normal run examples
 
 ```bash
