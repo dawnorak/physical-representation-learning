@@ -477,6 +477,7 @@ class JepaFinetuner(BaseFinetuner):
         state_dict = None
         inferred_arch = None
         configured_arch = self.cfg.model.get("encoder_arch", None)
+        configured_physics_aware = bool(self.cfg.model.get("physics_aware", False))
         if self.trained_model_path is not None:
             print(f"loading state dict from {self.trained_model_path}", flush=True)
             state_dict = torch.load(self.trained_model_path, map_location="cpu")
@@ -494,6 +495,8 @@ class JepaFinetuner(BaseFinetuner):
 
         target_arch = inferred_arch or configured_arch
         build_cfg.model.encoder_arch = "vjepa" if target_arch == "vjepa" else None
+        if target_arch == "physics_aware" or configured_physics_aware:
+            build_cfg.model.physics_aware = True
 
         encoder = build_encoder_from_cfg(
             build_cfg,

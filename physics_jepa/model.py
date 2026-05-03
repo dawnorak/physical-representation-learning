@@ -58,6 +58,15 @@ def infer_encoder_arch_from_state_dict(state_dict):
     if is_vjepa:
         return "vjepa"
 
+    is_physics_aware = (
+        any(".depthwise.conv." in k for k in keys)
+        or any(k.startswith("downsample_layers.0.conv.") for k in keys)
+        or any("group_stems." in k for k in keys)
+        or any("global_context_proj." in k for k in keys)
+    )
+    if is_physics_aware:
+        return "physics_aware"
+
     if any(k.startswith(("res_blocks.", "downsample_layers.")) for k in keys):
         return "cnn"
 

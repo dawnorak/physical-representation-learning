@@ -218,6 +218,7 @@ def load_encoder(checkpoint_path: Path, cfg, device: torch.device):
     state_dict = normalize_state_dict_keys(state_dict)
     inferred_arch = infer_encoder_arch_from_state_dict(state_dict)
     configured_arch = cfg.model.get("encoder_arch", None)
+    configured_physics_aware = bool(cfg.model.get("physics_aware", False))
 
     if inferred_arch is not None and configured_arch is not None and inferred_arch != configured_arch:
         warnings.warn(
@@ -231,6 +232,22 @@ def load_encoder(checkpoint_path: Path, cfg, device: torch.device):
     if target_arch == "vjepa":
         build_cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
         build_cfg.model.encoder_arch = "vjepa"
+        encoder = build_encoder_from_cfg(build_cfg)
+        encoder.load_state_dict(state_dict, strict=True)
+        encoder.eval()
+        encoder.to(device)
+        return encoder
+
+    if inferred_arch == "physics_aware" or configured_physics_aware:
+        if inferred_arch is not None and not configured_physics_aware and inferred_arch != "physics_aware":
+            warnings.warn(
+                f"Checkpoint implies encoder_arch={inferred_arch!r} but physics-aware config is enabled. "
+                "Using the multiscale physics-aware encoder so weights load.",
+                UserWarning,
+                stacklevel=2,
+            )
+        build_cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
+        build_cfg.model.physics_aware = True
         encoder = build_encoder_from_cfg(build_cfg)
         encoder.load_state_dict(state_dict, strict=True)
         encoder.eval()
