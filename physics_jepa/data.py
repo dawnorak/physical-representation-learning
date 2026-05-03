@@ -9,10 +9,10 @@ import h5py
 from pathlib import Path
 from typing import Sized, Iterator, TypeVar, Optional, Tuple, Dict, List
 import numpy as np
+import torch.distributed as dist
 import random
 import weakref
 from collections import OrderedDict
-import torch.distributed as dist
 
 class WellDatasetForJEPA(Dataset):
     """
@@ -749,7 +749,7 @@ def get_train_dataloader(
         shuffle=True,
         num_workers=4, 
         persistent_workers=True, 
-        pin_memory=False, 
+        pin_memory=True, 
         prefetch_factor=2,
         include_labels=False,
         predict_n_steps=False,
@@ -827,7 +827,7 @@ def get_val_dataloader(
         seed=42, 
         shuffle=False,
         persistent_workers=True, 
-        pin_memory=False, 
+        pin_memory=True, 
         prefetch_factor=2,
         include_labels=False,
         predict_n_steps=False,
