@@ -258,11 +258,23 @@ def vicreg_loss_3d(
     # Optionally restrict the loss to masked tokens only.
     if mask is not None:
         if mask.dim() == 5:
-            mask = mask.squeeze(1)
-        mask = rearrange(mask, 'b t h w -> (b t h w)')
+            if mask.size(1) != 1:
+                raise ValueError(f"Expected single-channel mask, got shape {tuple(mask.shape)}")
+            mask = mask[:, 0]
+        elif mask.dim() != 4:
+            raise ValueError(f"Expected mask with 4 or 5 dims, got shape {tuple(mask.shape)}")
+
+        # Make sure the mask matches the latent grid resolution before flattening.
+        if tuple(mask.shape[-3:]) != tuple(x.shape[-3:]):
+            mask = F.interpolate(
+                mask.unsqueeze(1).float(),
+                size=tuple(x.shape[-3:]),
+                mode="nearest",
+            ).squeeze(1)
+
         mask = mask.to(torch.bool)
-        x = rearrange(x, 'b c t h w -> (b t h w) c')[mask]
-        y = rearrange(y, 'b c t h w -> (b t h w) c')[mask]
+        x = rearrange(x, 'b c t h w -> (b t h w) c')[mask.reshape(-1)]
+        y = rearrange(y, 'b c t h w -> (b t h w) c')[mask.reshape(-1)]
     else:
         # Flatten to (N, C) where N = B*T*H*W
         x = rearrange(x, 'b c t h w -> (b t h w) c')
