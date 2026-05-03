@@ -1,86 +1,112 @@
 This is the official code repository for the paper [Representation Learning for Spatiotemporal Physical Systems](https://arxiv.org/abs/2603.13227).
 
-## Installation
+## Setup
 
-**Requirements:** Python 3.10+, PyTorch 2.0+ with CUDA.
+### 1) Create and activate a Python environment
 
-Clone the repository and install dependencies:
+Use Conda (recommended):
 
 ```bash
-git clone https://github.com/your-org/physics_jepa_public
-cd physics_jepa_public
-pip install torch torchvision einops omegaconf wandb tqdm h5py psutil scikit-learn timm the-well
+conda create -n prl310 python=3.10 -y
+conda activate prl310
+```
+
+### 2) Install dependencies
+
+From the repository root:
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Install a PyTorch build compatible with your CUDA runtime if needed. Then install the package in editable mode:
+
+```bash
 pip install -e .
 ```
 
-### Environment setup
+### 3) Set required environment variables
 
-Edit `scripts/env_setup.sh` to activate your virtual environment and set the path to [The Well](https://github.com/PolymathicAI/the_well) datasets. This file is sourced automatically by all scripts. The `THE_WELL_DATA_DIR` variable is required by all training and finetuning scripts that use The Well data.
+All training and validation scripts require dataset and import paths:
 
-That file also hardcodes the W&B entity and project. Keep the API key out of the repo and export it in your shell before launching:
+```bash
+export THE_WELL_DATA_DIR=/path/to/well/root
+export PYTHONPATH=$(pwd):$PYTHONPATH
+```
+
+For W\&B logging in online mode:
 
 ```bash
 export WANDB_API_KEY="your_key_here"
+export WANDB_ENTITY="your_entity"
+export WANDB_PROJECT="physics-jepa"
 ```
 
-## Training
+## Running scripts
 
-### 1. JEPA pretraining
+Experiment scripts are organized under:
 
-Pretrain a convolutional JEPA encoder on a physics dataset using the scripts in `scripts/<dataset>/`:
+- `experiment_run_scripts/normal_script` for interactive/single-node runs
+- `experiment_run_scripts/hpc_script` for Slurm batch runs
 
-| Dataset | Script |
-|---|---|
-| Shear flow | `scripts/shear_flow/run_train_jepa.sh` |
-| Rayleigh-Bénard | `scripts/rayleigh_benard/run_train_jepa.sh` |
-| Active matter | `scripts/active_matter/run_train_jepa.sh` |
+### Pretraining
 
-Config fields `out_path` and `cache_path` control where checkpoints and dataset caches are written. Key training hyperparameters (learning rate, number of epochs, noise level, etc.) are set in the `train:` block of the corresponding config. Config fields can be overridden from the command line by passing `key=value` arguments to the script, e.g.:
+Use model-specific pretraining scripts, for example:
 
 ```bash
-scripts/shear_flow/run_train_jepa.sh train.num_epochs=10 train.lr=5e-4
+bash experiment_run_scripts/normal_script/pretrain_vjepa.sh
+bash experiment_run_scripts/normal_script/pretrain_conv_large.sh
 ```
 
-### 2. VideoMAE finetuning (baseline)
+HPC equivalents can be submitted with `sbatch`.
 
-Fine-tune a pretrained [VideoMAE](https://github.com/MCG-NJU/VideoMAE) backbone for physical parameter estimation. Set the `CHECKPOINT_PATH` environment variable to the pretrained VideoMAE checkpoint and run the appropriate script:
+## Validation from saved encoders
 
-| Dataset | Script |
-|---|---|
-| Shear flow | `scripts/shear_flow/run_finetune_videomae.sh` |
-| Rayleigh-Bénard | `scripts/rayleigh_benard/run_finetune_videomae.sh` |
-| Active matter | `scripts/active_matter/run_finetune_videomae.sh` |
+Saved encoder checkpoints can be validated with the finetune/validation scripts in `experiment_run_scripts`.
 
-### 3. JEPA finetuning (parameter estimation)
+Each finetune script now supports direct defaults from `encoders/`:
 
-Fine-tune a pretrained JEPA encoder for physical parameter estimation. Set `CHECKPOINT_PATH` to a saved encoder checkpoint and run the appropriate script:
+- default checkpoint: `encoders/<model_name>.pth`
+- default config: `encoders/config.yaml`
 
-| Dataset | Script |
-|---|---|
-| Shear flow | `scripts/shear_flow/run_finetune_jepa.sh` |
-| Rayleigh-Bénard | `scripts/rayleigh_benard/run_finetune_jepa.sh` |
-| Active matter | `scripts/active_matter/run_finetune_jepa.sh` |
+So if your files exist in `encoders/`, you can run validation with no extra arguments.
 
-The same configs used for pretraining are reused here; the `ft:` block controls finetuning hyperparameters. A multi-GPU variant is available at `scripts/shear_flow/run_finetune_jepa_ddp.sh`.
-
-## Baselines
-
-### 4. DISCO finetuning
-
-[DISCO](https://arxiv.org/abs/2401.09246) is a latent-space parameter estimation baseline. It operates on precomputed DISCO latent representations rather than raw data. Pass the path to a directory of DISCO inference outputs as the first argument:
+### Normal run examples
 
 ```bash
-scripts/run_finetune_disco.sh /path/to/disco_inference_shear_flow
+bash experiment_run_scripts/normal_script/finetune_vjepa.sh
+bash experiment_run_scripts/normal_script/finetune_conv_small.sh
+bash experiment_run_scripts/normal_script/finetune_conv_2p1d.sh
 ```
 
-The data directory name must match one of the dataset keys in `physics_jepa/baselines/disco.py` (e.g. `disco_inference_shear_flow`, `disco_inference_rayleigh_benard`, `disco_inference_active_matter`).
-
-### 5. MPP finetuning
-
-Fine-tune a pretrained [MPP](https://github.com/PolymathicAI/multiple_physics_pretraining) (Multiple Physics Pretraining) model for physical parameter estimation. Pass the dataset name and path to a pretrained MPP checkpoint:
+Optional explicit form:
 
 ```bash
-scripts/run_mpp_param_estimation.sh shear_flow /path/to/MPP_AViT_Ti
+bash experiment_run_scripts/normal_script/finetune_vjepa.sh \
+  /path/to/encoder.pth \
+  /path/to/config.yaml \
+  /path/to/results_dir
 ```
 
-`--dataset_name` should match the corresponding dataset directory name in `THE_WELL_DATA_DIR`. The checkpoint save directory can be controlled via the `CHECKPOINT_DIR` environment variable (defaults to `./checkpoints`).
+### HPC run examples
+
+```bash
+sbatch experiment_run_scripts/hpc_script/finetune_vjepa.sh
+sbatch experiment_run_scripts/hpc_script/finetune_conv_large.sh
+```
+
+Optional explicit form:
+
+```bash
+sbatch experiment_run_scripts/hpc_script/finetune_vjepa.sh \
+  /scratch/.../encoder.pth \
+  /scratch/.../config.yaml \
+  /scratch/.../results_dir
+```
+
+## Notes
+
+- Finetune scripts run `physics_jepa.eval_frozen_regression` with `--probe_type both` for validation.
+- Results are written to per-model subdirectories under `results/` by default.
+- If the checkpoint path does not exist, the script prints usage and exits with an error.

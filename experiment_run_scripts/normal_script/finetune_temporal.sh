@@ -11,14 +11,16 @@ mkdir -p ./results
 export THE_WELL_DATA_DIR=/home/ubuntu
 export PYTHONPATH=/home/ubuntu/physical-representation-learning:$PYTHONPATH
 
-ENCODER_CKPT="${1:?Provide encoder checkpoint path}"
-MODEL_CONFIG="${2:?Provide model config path}"
+MODEL_KEY="temporal"
+DEFAULT_ENCODER="/home/ubuntu/physical-representation-learning/encoders/${MODEL_KEY}.pth"
+ENCODER_CKPT="${1:-$DEFAULT_ENCODER}"
+MODEL_CONFIG="${2:-/home/ubuntu/physical-representation-learning/encoders/config.yaml}"
 RESULTS_DIR="${3:-/home/ubuntu/physical-representation-learning/results/temporal}"
 
-python -m physics_jepa.eval_frozen_regression \
-  --dataset_name active_matter \
-  --encoder_checkpoint "$ENCODER_CKPT" \
-  --model_config "$MODEL_CONFIG" \
-  --probe_type both \
-  --results_dir "$RESULTS_DIR" \
-  --num_workers 0
+if [ ! -f "$ENCODER_CKPT" ]; then
+  echo "Encoder checkpoint not found: $ENCODER_CKPT"
+  echo "Usage: $0 /path/to/encoder.pth [model_config] [results_dir]"
+  exit 1
+fi
+
+python -m physics_jepa.eval_frozen_regression   --dataset_name active_matter   --encoder_checkpoint "$ENCODER_CKPT"   --model_config "$MODEL_CONFIG"   --probe_type both   --results_dir "$RESULTS_DIR"   --num_workers 0
