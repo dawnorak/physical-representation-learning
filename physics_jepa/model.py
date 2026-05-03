@@ -34,6 +34,36 @@ def _infer_in_chans(cfg, in_chans=None, stage_cfg=None):
     raise ValueError("Unable to infer input channel count from config")
 
 
+def _normalize_state_dict_key(key):
+    while True:
+        for prefix in ("module.", "encoder.", "model.", "backbone."):
+            if key.startswith(prefix):
+                key = key[len(prefix):]
+                break
+        else:
+            return key
+
+
+def normalize_state_dict_keys(state_dict):
+    return {_normalize_state_dict_key(key): value for key, value in state_dict.items()}
+
+
+def infer_encoder_arch_from_state_dict(state_dict):
+    keys = [_normalize_state_dict_key(key) for key in state_dict.keys()]
+    is_vjepa = (
+        any(k.startswith("patch_embed.proj.") for k in keys)
+        and any(k.startswith("blocks.") for k in keys)
+        and any(k.startswith(("pos_embed", "token_norm.", "pool_norm.")) for k in keys)
+    )
+    if is_vjepa:
+        return "vjepa"
+
+    if any(k.startswith(("res_blocks.", "downsample_layers.")) for k in keys):
+        return "cnn"
+
+    return None
+
+
 def _build_cnn_encoder(
     dims,
     num_res_blocks,

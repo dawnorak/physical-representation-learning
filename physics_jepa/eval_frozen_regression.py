@@ -15,6 +15,7 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from .data import get_dataset
+from .model import build_encoder_from_cfg, infer_encoder_arch_from_state_dict, normalize_state_dict_keys
 from .utils.data_utils import normalize_labels
 from .utils.hydra import compose
 from .utils.model_utils import ConvEncoder, ConvEncoderViTTiny
@@ -153,14 +154,12 @@ def unwrap_encoder_checkpoint(raw):
     """Support flat encoder .pth or nested dicts with model/state_dict keys."""
     if not isinstance(raw, dict):
         return raw
-    if any(k.startswith(("res_blocks", "downsample")) for k in raw):
+    if infer_encoder_arch_from_state_dict(raw) is not None:
         return raw
     for key in ("model", "state_dict", "encoder", "model_state_dict"):
         inner = raw.get(key)
-        if isinstance(inner, dict) and inner:
-            first = next(iter(inner.keys()))
-            if isinstance(first, str) and first.startswith(("res_blocks", "downsample")):
-                return inner
+        if isinstance(inner, dict) and inner and infer_encoder_arch_from_state_dict(inner) is not None:
+            return inner
     return raw
 
 
@@ -216,7 +215,28 @@ def build_encoder(cfg, encoder_block_type=None):
 def load_encoder(checkpoint_path: Path, cfg, device: torch.device):
     raw = torch.load(checkpoint_path, map_location="cpu")
     state_dict = unwrap_encoder_checkpoint(raw)
-    state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+    state_dict = normalize_state_dict_keys(state_dict)
+    inferred_arch = infer_encoder_arch_from_state_dict(state_dict)
+    configured_arch = cfg.model.get("encoder_arch", None)
+
+    if inferred_arch is not None and configured_arch is not None and inferred_arch != configured_arch:
+        warnings.warn(
+            f"Checkpoint implies encoder_arch={inferred_arch!r} but model config has "
+            f"{configured_arch!r}. Using checkpoint-derived architecture so weights load.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    target_arch = inferred_arch or configured_arch
+    if target_arch == "vjepa":
+        build_cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
+        build_cfg.model.encoder_arch = "vjepa"
+        encoder = build_encoder_from_cfg(build_cfg)
+        encoder.load_state_dict(state_dict, strict=True)
+        encoder.eval()
+        encoder.to(device)
+        return encoder
+
     inferred = infer_encoder_block_type(state_dict)
     configured = cfg.model.get("encoder_block_type", "standard")
     if configured is None:

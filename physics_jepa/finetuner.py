@@ -20,10 +20,11 @@ import gc
 import time
 from typing import List, Sequence
 import re
+import warnings
 from sklearn.metrics import f1_score
 
 from .data import EmbeddingsDataset, get_dataset_metadata, get_train_dataloader, get_val_dataloader
-from .model import get_model_and_loss_cnn, get_autoencoder
+from .model import build_encoder_from_cfg, get_autoencoder, infer_encoder_arch_from_state_dict, normalize_state_dict_keys
 from .utils.data_utils import normalize_labels
 from .utils.model_utils import RegressionHead, RegressionMLP
 from .attentive_pooler import AttentiveClassifier
@@ -472,21 +473,35 @@ class BaseFinetuner(Trainer, ABC):
 # JEPA Finetuner
 class JepaFinetuner(BaseFinetuner):
     def load_model(self):
-        encoder, _, _ = get_model_and_loss_cnn(
-            self.cfg.model.dims,
-            self.cfg.model.num_res_blocks,
-            self.cfg.dataset.num_frames,
-            in_chans=self.cfg.dataset.num_chans if 'fields' not in self.cfg.ft else len(self.cfg.ft.fields),
-            encoder_block_type=self.cfg.model.get("encoder_block_type", "standard"),
-        )
+        build_cfg = OmegaConf.create(OmegaConf.to_container(self.cfg, resolve=False))
+        state_dict = None
+        inferred_arch = None
+        configured_arch = self.cfg.model.get("encoder_arch", None)
         if self.trained_model_path is not None:
             print(f"loading state dict from {self.trained_model_path}", flush=True)
-            state_dict = torch.load(self.trained_model_path)
-            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
-            encoder.load_state_dict(state_dict)
+            state_dict = torch.load(self.trained_model_path, map_location="cpu")
+            state_dict = normalize_state_dict_keys(state_dict)
+            inferred_arch = infer_encoder_arch_from_state_dict(state_dict)
+            if inferred_arch is not None and configured_arch is not None and inferred_arch != configured_arch:
+                warnings.warn(
+                    f"Checkpoint implies encoder_arch={inferred_arch!r} but model config has "
+                    f"{configured_arch!r}. Using checkpoint-derived architecture so weights load.",
+                    UserWarning,
+                    stacklevel=2,
+                )
         else:
             print(f"no pretrained model path provided, randomly initializing encoder", flush=True)
-        
+
+        target_arch = inferred_arch or configured_arch
+        build_cfg.model.encoder_arch = "vjepa" if target_arch == "vjepa" else None
+
+        encoder = build_encoder_from_cfg(
+            build_cfg,
+            stage_cfg=self.cfg.ft if hasattr(self.cfg, "ft") else None,
+        )
+        if state_dict is not None:
+            encoder.load_state_dict(state_dict, strict=True)
+
         encoder.eval()
         return encoder
     
