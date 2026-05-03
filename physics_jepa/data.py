@@ -9,12 +9,10 @@ import h5py
 from pathlib import Path
 from typing import Sized, Iterator, TypeVar, Optional, Tuple, Dict, List
 import numpy as np
-import torch.distributed as dist
 import random
 import weakref
 from collections import OrderedDict
-
-from physics_jepa.utils.vjepa_masking import VJepaMaskCollator
+import torch.distributed as dist
 
 class WellDatasetForJEPA(Dataset):
     """
@@ -716,10 +714,6 @@ def get_train_dataloader_from_cfg(cfg, stage="train", rank=None, world_size=None
         noise_std=cfg[stage].get("noise_std", 0.0),
         temporal_masking=cfg[stage].get("temporal_masking", False),
         future_mask_frames=cfg[stage].get("future_mask_frames", 0),
-        vjepa_masking=cfg[stage].get("vjepa_masking", False),
-        vjepa_mask_cfgs=cfg[stage].get("vjepa_mask_cfgs", None),
-        patch_size=cfg.model.get("patch_size", None),
-        tubelet_size=cfg.model.get("tubelet_size", None),
     )
 
 def get_val_dataloader_from_cfg(cfg, stage="train", rank=None, world_size=None):
@@ -741,10 +735,6 @@ def get_val_dataloader_from_cfg(cfg, stage="train", rank=None, world_size=None):
         noise_std=cfg[stage].get("noise_std", 0.0),
         temporal_masking=cfg[stage].get("temporal_masking", False),
         future_mask_frames=cfg[stage].get("future_mask_frames", 0),
-        vjepa_masking=cfg[stage].get("vjepa_masking", False),
-        vjepa_mask_cfgs=cfg[stage].get("vjepa_mask_cfgs", None),
-        patch_size=cfg.model.get("patch_size", None),
-        tubelet_size=cfg.model.get("tubelet_size", None),
     )
 
 def get_train_dataloader(
@@ -772,10 +762,6 @@ def get_train_dataloader(
         noise_std=0.0,
         temporal_masking=False,
         future_mask_frames=0,
-        vjepa_masking=False,
-        vjepa_mask_cfgs=None,
-        patch_size=None,
-        tubelet_size=None,
     ):
     dataset = get_dataset(dataset_name,
                           num_frames, 
@@ -827,17 +813,6 @@ def get_train_dataloader(
         persistent_workers=persistent_workers,
         pin_memory=pin_memory,
         prefetch_factor=prefetch_factor,
-        collate_fn=(
-            VJepaMaskCollator(
-                cfgs_mask=vjepa_mask_cfgs,
-                crop_size=resolution if resolution is not None else 224,
-                num_frames=num_frames,
-                patch_size=patch_size if patch_size is not None else 16,
-                tubelet_size=tubelet_size if tubelet_size is not None else 2,
-            )
-            if vjepa_masking and vjepa_mask_cfgs is not None
-            else None
-        ),
     )
     return loader
 
@@ -864,10 +839,6 @@ def get_val_dataloader(
         noise_std=0.0,
         temporal_masking=False,
         future_mask_frames=0,
-        vjepa_masking=False,
-        vjepa_mask_cfgs=None,
-        patch_size=None,
-        tubelet_size=None,
     ):
     dataset = get_dataset(dataset_name, 
                           num_frames, 
@@ -915,16 +886,5 @@ def get_val_dataloader(
         persistent_workers=persistent_workers,
         pin_memory=pin_memory,
         prefetch_factor=prefetch_factor,
-        collate_fn=(
-            VJepaMaskCollator(
-                cfgs_mask=vjepa_mask_cfgs,
-                crop_size=resolution if resolution is not None else 224,
-                num_frames=num_frames,
-                patch_size=patch_size if patch_size is not None else 16,
-                tubelet_size=tubelet_size if tubelet_size is not None else 2,
-            )
-            if vjepa_masking and vjepa_mask_cfgs is not None
-            else None
-        ),
     )
     return val_loader
