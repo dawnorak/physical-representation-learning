@@ -176,7 +176,7 @@ def infer_encoder_block_type(state_dict):
     return None
 
 
-def build_encoder(cfg):
+def build_encoder(cfg, encoder_block_type=None):
     in_chans = cfg.dataset.num_chans
     if cfg.model.get("vit_equivalency", None) == "tiny":
         encoder = ConvEncoderViTTiny(
@@ -191,7 +191,11 @@ def build_encoder(cfg):
             "dims": cfg.model.dims,
             "num_frames": cfg.dataset.num_frames,
         }
-        block_type = cfg.model.get("encoder_block_type", "standard")
+        block_type = (
+            encoder_block_type
+            if encoder_block_type is not None
+            else cfg.model.get("encoder_block_type", "standard")
+        )
         sig = inspect.signature(ConvEncoder.__init__)
         if "encoder_block_type" in sig.parameters:
             kwargs["encoder_block_type"] = block_type
@@ -230,8 +234,7 @@ def load_encoder(checkpoint_path: Path, cfg, device: torch.device):
                 UserWarning,
                 stacklevel=2,
             )
-        OmegaConf.update(cfg, "model.encoder_block_type", inferred, merge=True)
-    encoder = build_encoder(cfg)
+    encoder = build_encoder(cfg, encoder_block_type=inferred or configured_str)
     encoder.load_state_dict(state_dict, strict=True)
     encoder.eval()
     encoder.to(device)
