@@ -6,6 +6,8 @@ conda activate py310
 
 cd /home/ubuntu/physical-representation-learning
 
+mkdir -p ./results
+
 export THE_WELL_DATA_DIR=/home/ubuntu
 export PYTHONPATH=/home/ubuntu/physical-representation-learning:$PYTHONPATH
 
