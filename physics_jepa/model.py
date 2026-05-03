@@ -6,7 +6,156 @@ from functools import partial
 from einops import rearrange
 from collections import defaultdict
 
-from physics_jepa.utils.model_utils import ConvEncoder, ConvPredictor, ConvDecoder
+from physics_jepa.utils.model_utils import (
+    ConvEncoder,
+    ConvEncoderViTTiny,
+    ConvPredictor,
+    ConvPredictorViTTiny,
+    ConvDecoder,
+    MultiscaleConvEncoder,
+)
+from physics_jepa.vjepa import VJepaVisionTransformer
+
+
+def _infer_in_chans(cfg, in_chans=None, stage_cfg=None):
+    if in_chans is not None:
+        return int(in_chans)
+
+    if stage_cfg is not None and stage_cfg.get("fields", None) is not None:
+        return len(stage_cfg.fields)
+
+    if cfg.dataset.get("num_chans", None) is not None:
+        return int(cfg.dataset.num_chans)
+
+    raise ValueError("Unable to infer input channel count from config")
+
+
+def _build_cnn_encoder(
+    dims,
+    num_res_blocks,
+    num_frames,
+    in_chans=2,
+    encoder_block_type="standard",
+    physics_aware=False,
+    field_aware_stem=None,
+    periodic_padding=None,
+    temporal_downsample_start_stage=None,
+    use_global_context_token=None,
+    field_group_sizes=None,
+):
+    if physics_aware:
+        field_aware_stem = True if field_aware_stem is None else bool(field_aware_stem)
+        periodic_padding = True if periodic_padding is None else bool(periodic_padding)
+        if temporal_downsample_start_stage is None:
+            temporal_downsample_start_stage = min(3, len(dims) - 1)
+        if use_global_context_token is None:
+            use_global_context_token = False
+        return MultiscaleConvEncoder(
+            in_chans=in_chans,
+            num_res_blocks=num_res_blocks,
+            dims=dims,
+            num_frames=num_frames,
+            field_aware_stem=field_aware_stem,
+            periodic_padding=periodic_padding,
+            field_group_sizes=field_group_sizes,
+            temporal_downsample_start_stage=temporal_downsample_start_stage,
+            use_global_context_token=use_global_context_token,
+        )
+
+    return ConvEncoder(
+        in_chans=in_chans,
+        num_res_blocks=num_res_blocks,
+        dims=dims,
+        num_frames=num_frames,
+        encoder_block_type=encoder_block_type,
+    )
+
+
+def _build_vjepa_encoder(
+    dims,
+    num_frames,
+    in_chans=2,
+    img_size=224,
+    patch_size=8,
+    tubelet_size=None,
+    embed_dim=None,
+    depth=12,
+    num_heads=None,
+    mlp_ratio=4.0,
+    drop_rate=0.0,
+    attn_drop_rate=0.0,
+    drop_path_rate=0.0,
+    use_learnable_pos_emb=False,
+    use_checkpoint=False,
+    uniform_power=False,
+):
+    resolved_embed_dim = int(embed_dim if embed_dim is not None else dims[-1])
+    resolved_num_heads = int(num_heads if num_heads is not None else max(1, resolved_embed_dim // 64))
+    resolved_tubelet_size = int(tubelet_size if tubelet_size is not None else max(1, num_frames // 2))
+
+    return VJepaVisionTransformer(
+        img_size=img_size,
+        patch_size=patch_size,
+        num_frames=num_frames,
+        tubelet_size=resolved_tubelet_size,
+        in_chans=in_chans,
+        embed_dim=resolved_embed_dim,
+        depth=depth,
+        num_heads=resolved_num_heads,
+        mlp_ratio=mlp_ratio,
+        drop_rate=drop_rate,
+        attn_drop_rate=attn_drop_rate,
+        drop_path_rate=drop_path_rate,
+        use_learnable_pos_emb=use_learnable_pos_emb,
+        use_checkpoint=use_checkpoint,
+        uniform_power=uniform_power,
+    )
+
+
+def build_encoder_from_cfg(cfg, in_chans=None, stage_cfg=None):
+    resolved_in_chans = _infer_in_chans(cfg, in_chans=in_chans, stage_cfg=stage_cfg)
+    encoder_arch = cfg.model.get("encoder_arch", None)
+
+    if encoder_arch == "vjepa":
+        return _build_vjepa_encoder(
+            dims=cfg.model.dims,
+            num_frames=cfg.dataset.num_frames,
+            in_chans=resolved_in_chans,
+            img_size=cfg.dataset.get("resolution", 224),
+            patch_size=cfg.model.get("patch_size", 8),
+            tubelet_size=cfg.model.get("tubelet_size", None),
+            embed_dim=cfg.model.get("embed_dim", cfg.model.dims[-1]),
+            depth=cfg.model.get("depth", 12),
+            num_heads=cfg.model.get("num_heads", None),
+            mlp_ratio=cfg.model.get("mlp_ratio", 4.0),
+            drop_rate=cfg.model.get("drop_rate", 0.0),
+            attn_drop_rate=cfg.model.get("attn_drop_rate", 0.0),
+            drop_path_rate=cfg.model.get("drop_path_rate", 0.0),
+            use_learnable_pos_emb=cfg.model.get("use_learnable_pos_emb", False),
+            use_checkpoint=cfg.model.get("use_checkpoint", False),
+            uniform_power=cfg.model.get("uniform_power", False),
+        )
+
+    if cfg.model.get("vit_equivalency", None) == "tiny":
+        return ConvEncoderViTTiny(
+            in_chans=resolved_in_chans,
+            num_res_blocks=cfg.model.num_res_blocks,
+            dims=cfg.model.dims,
+        )
+
+    return _build_cnn_encoder(
+        dims=cfg.model.dims,
+        num_res_blocks=cfg.model.num_res_blocks,
+        num_frames=cfg.dataset.num_frames,
+        in_chans=resolved_in_chans,
+        encoder_block_type=cfg.model.get("encoder_block_type", "standard"),
+        physics_aware=cfg.model.get("physics_aware", False),
+        field_aware_stem=cfg.model.get("field_aware_stem", None),
+        periodic_padding=cfg.model.get("periodic_padding", None),
+        temporal_downsample_start_stage=cfg.model.get("temporal_downsample_start_stage", None),
+        use_global_context_token=cfg.model.get("use_global_context_token", None),
+        field_group_sizes=cfg.model.get("field_group_sizes", None),
+    )
 
 def get_model_and_loss_cnn(
     dims,
@@ -17,14 +166,75 @@ def get_model_and_loss_cnn(
     std_coeff=25,
     cov_coeff=1,
     encoder_block_type="standard",
+    physics_aware=False,
+    field_aware_stem=None,
+    periodic_padding=None,
+    temporal_downsample_start_stage=None,
+    use_global_context_token=None,
+    field_group_sizes=None,
+    vit_equivalency=None,
+    encoder_arch=None,
+    img_size=None,
+    patch_size=None,
+    tubelet_size=None,
+    embed_dim=None,
+    depth=None,
+    num_heads=None,
+    mlp_ratio=None,
+    drop_rate=0.0,
+    attn_drop_rate=0.0,
+    drop_path_rate=0.0,
+    use_learnable_pos_emb=False,
+    use_checkpoint=False,
+    uniform_power=False,
 ):
-    encoder = ConvEncoder(
-        dims=dims,
-        in_chans=in_chans,
-        num_res_blocks=num_res_blocks,
-        num_frames=num_frames,
-        encoder_block_type=encoder_block_type,
-    )
+    if encoder_arch == "vjepa":
+        encoder = _build_vjepa_encoder(
+            dims=dims,
+            num_frames=num_frames,
+            in_chans=in_chans,
+            img_size=img_size if img_size is not None else 224,
+            patch_size=patch_size if patch_size is not None else 8,
+            tubelet_size=tubelet_size,
+            embed_dim=embed_dim,
+            depth=depth if depth is not None else 12,
+            num_heads=num_heads,
+            mlp_ratio=mlp_ratio if mlp_ratio is not None else 4.0,
+            drop_rate=drop_rate,
+            attn_drop_rate=attn_drop_rate,
+            drop_path_rate=drop_path_rate,
+            use_learnable_pos_emb=use_learnable_pos_emb,
+            use_checkpoint=use_checkpoint,
+            uniform_power=uniform_power,
+        )
+        loss = partial(vicreg_loss_3d,
+                    sim_coeff=sim_coeff,
+                    std_coeff=std_coeff,
+                    cov_coeff=cov_coeff,
+                    n_chunks=5)
+        predictor = ConvPredictorViTTiny(dims=[encoder.dims[-1], encoder.dims[-1]])
+        return encoder, predictor, loss
+
+    if vit_equivalency == "tiny":
+        encoder = ConvEncoderViTTiny(
+            in_chans=in_chans,
+            num_res_blocks=num_res_blocks,
+            dims=dims,
+        )
+    else:
+        encoder = _build_cnn_encoder(
+            dims=dims,
+            num_res_blocks=num_res_blocks,
+            num_frames=num_frames,
+            in_chans=in_chans,
+            encoder_block_type=encoder_block_type,
+            physics_aware=physics_aware,
+            field_aware_stem=field_aware_stem,
+            periodic_padding=periodic_padding,
+            temporal_downsample_start_stage=temporal_downsample_start_stage,
+            use_global_context_token=use_global_context_token,
+            field_group_sizes=field_group_sizes,
+        )
     loss = partial(vicreg_loss_3d,
                 sim_coeff=sim_coeff,
                 std_coeff=std_coeff,
@@ -39,7 +249,7 @@ def vicreg_loss_3d(
     num_groups=1,
     fp32_stats=False,
     zscore_for_cov=False,
-    adaptive_cov_scale=False
+    adaptive_cov_scale=False,
 ):
     """
     x,y: (B, C, T, H, W)
@@ -48,6 +258,8 @@ def vicreg_loss_3d(
     # Flatten to (N, C) where N = B*T*H*W
     x = rearrange(x, 'b c t h w -> (b t h w) c')
     y = rearrange(y, 'b c t h w -> (b t h w) c')
+    if x.numel() == 0 or y.numel() == 0:
+        raise ValueError("vicreg_loss_3d received an empty token set")
 
     N = x.shape[0]
 
