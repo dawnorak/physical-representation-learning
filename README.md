@@ -1,4 +1,4 @@
-This is the official code repository for the paper [Representation Learning for Spatiotemporal Physical Systems](https://arxiv.org/abs/2603.13227).
+This is the official repository for the Deep Learning project code on representation learning for spatiotemporal physical systems.
 
 ## Setup
 
@@ -77,7 +77,8 @@ So if your files exist in `encoders/`, you can run validation with no extra argu
 Use the dedicated script:
 
 ```bash
-bash test_model/run_saved_encoder_validation.sh
+chmod +x test_model/run_saved_encoder_validation.sh
+./test_model/run_saved_encoder_validation.sh
 ```
 
 This script hardcodes:
@@ -90,7 +91,7 @@ This script hardcodes:
 You can optionally override checkpoint and results path:
 
 ```bash
-bash test_model/run_saved_encoder_validation.sh \
+./test_model/run_saved_encoder_validation.sh \
   /home/ubuntu/physical-representation-learning/encoders/conv_2p1d.pth \
   /home/ubuntu/physical-representation-learning/results/encoders_conv_2p1d
 ```
