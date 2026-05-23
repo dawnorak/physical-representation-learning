@@ -1,4 +1,4 @@
-This is the official repository for the Deep Learning project code on representation learning for spatiotemporal physical systems.
+This is the official repository for the Deep Learning project code on representation learning for spatiotemporal physical systems. Worked on by [Era Sarda](www.github.com/anonymousera), [Shivam Balikondwar](www.github.com/anonymousera), and [Vaigarai Sathi](www.github.com/dawnorak).
 
 **Note (model assets):** Due to Git LFS constraints, full model checkpoints and the matching Hydra config are not distributed through this repository. They are provided via the [Drive link](https://drive.google.com/drive/folders/1sUnQ6v2h4tkRTIwoHx1Lf4Csp259EnbD) (nyu email needed for access) shared with the project report. Download the files you need and place them under `encoders/` in this repo (for example `encoders/ConvEncoder.pth` and `encoders/config.yaml`). For a sample end-to-end validation run, `run_saved_encoder_validation.sh` hardcoded `encoders/ConvEncoder.pth` with `encoders/config.yaml`. 
 
